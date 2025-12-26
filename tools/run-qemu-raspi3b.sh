@@ -7,11 +7,13 @@ Usage:
   tools/run-qemu-raspi3b.sh \
     [--sd sd.img] \
     --kernel path/to/kernel8.img \
-    --dtb path/to/bcm2710-rpi-zero-2-w.dtb \
+    --dtb path/to/bcm2710-rpi-3-b.dtb \
     --append "console=ttyAMA0 root=/dev/mmcblk0p2 rootwait"
 
 Notes:
   - QEMU `-M raspi3b` loads the kernel via `-kernel` (not via Pi firmware).
+  - For QEMU `raspi3b`, a matching DTB like `bcm2710-rpi-3-b.dtb` is the safest default.
+    A Zero 2 W DTB (`bcm2710-rpi-zero-2-w.dtb`) is useful later for real hardware.
   - `--append` is passed as Linux kernel command line; for a non-Linux kernel it
     may be ignored.
   - Exit QEMU: Ctrl+A then X.

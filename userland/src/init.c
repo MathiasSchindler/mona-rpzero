@@ -7,6 +7,21 @@ int main(int argc, char **argv, char **envp) {
 
     sys_puts("[init] hello\n");
 
+    /* Phase-6 smoke test: run one command via a child process. */
+    sys_puts("[init] selftest: /bin/sh -c \"/bin/echo hello\"\n");
+    long pid = (long)sys_fork();
+    if (pid == 0) {
+        const char *const test_argv[] = {"sh", "-c", "/bin/echo hello", 0};
+        (void)sys_execve("/bin/sh", test_argv, 0);
+        sys_puts("[init] selftest execve failed\n");
+        sys_exit_group(127);
+    } else if (pid > 0) {
+        int status = 0;
+        (void)sys_wait4(pid, &status, 0, 0);
+    } else {
+        sys_puts("[init] selftest fork failed\n");
+    }
+
     /* Next stage: run the tiny shell. */
     const char *const sh_argv[] = {"sh", 0};
     uint64_t rc = sys_execve("/bin/sh", sh_argv, 0);

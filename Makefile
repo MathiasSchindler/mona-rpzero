@@ -7,7 +7,18 @@
 
 SHELL := /usr/bin/env bash
 
-DTB ?= kernel/build/bcm2710-rpi-zero-2-w.dtb
+# Device Tree Blob (DTB): describes the board's hardware (RAM, UART, MMIO ranges, interrupts).
+# QEMU can pass it to the kernel via `-dtb`, and on real Pi firmware passes a DTB pointer.
+#
+# By default we auto-detect a DTB in common locations. You can always override:
+#   make run DTB=path/to/some.dtb
+DTB_CANDIDATES := \
+	out/bcm2710-rpi-3-b.dtb \
+	out/bcm2710-rpi-zero-2-w.dtb \
+	archive/bcm2710-rpi-3-b.dtb \
+	archive/bcm2710-rpi-zero-2-w.dtb
+
+DTB ?= $(firstword $(wildcard $(DTB_CANDIDATES)))
 
 # QEMU raspi3b currently requires exactly 1 GiB RAM.
 MEM ?= 1024
@@ -24,7 +35,9 @@ all: aarch64-kernel
 # --- Bare-metal AArch64 kernel (Phase 0) ---
 
 AARCH64_DIR ?= kernel-aarch64
-AARCH64_CROSS ?= aarch64-linux-gnu-
+# Homebrew on macOS typically provides the bare-metal toolchain as `aarch64-elf-*`.
+# You can override this (e.g. `make AARCH64_CROSS=aarch64-linux-gnu- ...`).
+AARCH64_CROSS ?= aarch64-elf-
 AARCH64_IMG := $(AARCH64_DIR)/build/kernel8.img
 
 USERLAND_DIR ?= userland
@@ -39,6 +52,11 @@ aarch64-kernel: userland
 
 run-aarch64: aarch64-kernel
 	@echo "Starting QEMU (raspi3b) with bare-metal kernel"
+	@if [[ -z "$(DTB)" ]]; then \
+		echo "No DTB found. Put one into out/ or archive/, or pass DTB=..." >&2; \
+		echo "Tried: $(DTB_CANDIDATES)" >&2; \
+		exit 2; \
+	fi
 	@bash tools/run-qemu-raspi3b.sh \
 		--kernel "$(AARCH64_IMG)" \
 		--dtb "$(DTB)" \
