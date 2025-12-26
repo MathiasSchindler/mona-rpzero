@@ -47,6 +47,7 @@ typedef struct {
 #define EM_AARCH64 183
 
 #define PT_LOAD 1
+#define PT_PHDR 6
 
 /* Returns 0 on success, -1 on invalid ELF or out-of-range segments. */
 int elf64_load_etexec(const uint8_t *img,

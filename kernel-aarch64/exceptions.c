@@ -560,6 +560,24 @@ static uint64_t sys_execve(trap_frame_t *tf, uint64_t pathname_user, uint64_t ar
         MAX_STR = 256,
     };
 
+    /* Minimal Linux auxv types we care about for static binaries. */
+    enum {
+        AT_NULL = 0,
+        AT_PHDR = 3,
+        AT_PHENT = 4,
+        AT_PHNUM = 5,
+        AT_PAGESZ = 6,
+        AT_ENTRY = 9,
+        AT_UID = 11,
+        AT_EUID = 12,
+        AT_GID = 13,
+        AT_EGID = 14,
+        AT_PLATFORM = 15,
+        AT_EXECFN = 31,
+        AT_RANDOM = 25,
+        AT_SECURE = 23,
+    };
+
     /* Snapshot argv/envp strings from the *current* user image before loading the new one. */
     char arg_strs[MAX_ARGS][MAX_STR];
     char env_strs[MAX_ENVP][MAX_STR];
@@ -603,6 +621,26 @@ static uint64_t sys_execve(trap_frame_t *tf, uint64_t pathname_user, uint64_t ar
         return (uint64_t)(-(int64_t)EFAULT);
     }
 
+    /* If argv is missing, provide a sensible argv[0] for compatibility. */
+    if (argv_user == 0) {
+        const char *p = path;
+        for (uint64_t i = 0; path[i] != '\0'; i++) {
+            if (path[i] == '/') p = &path[i + 1];
+        }
+        /* If path ends with '/', fall back to the full path. */
+        if (*p == '\0') p = path;
+
+        argc = 1;
+        /* Copy into snapshot buffer.
+         * (Avoid libc; cap at MAX_STR-1.)
+         */
+        uint64_t j = 0;
+        for (; j + 1 < MAX_STR && p[j] != '\0'; j++) {
+            arg_strs[0][j] = p[j];
+        }
+        arg_strs[0][j] = '\0';
+    }
+
     const uint8_t *img = 0;
     uint64_t img_size = 0;
     uint32_t mode = 0;
@@ -618,6 +656,56 @@ static uint64_t sys_execve(trap_frame_t *tf, uint64_t pathname_user, uint64_t ar
     uint64_t maxva = 0;
     if (elf64_load_etexec(img, (size_t)img_size, USER_REGION_BASE, USER_REGION_SIZE, &entry, &minva, &maxva) != 0) {
         return (uint64_t)(-(int64_t)ENOEXEC);
+    }
+
+    /* Compute auxiliary vectors derived from the ELF header.
+     * Best-effort: if we can't derive AT_PHDR safely, we omit it.
+     */
+    uint64_t at_phdr = 0;
+    uint64_t at_phent = 0;
+    uint64_t at_phnum = 0;
+    {
+        if (img_size >= sizeof(elf64_ehdr_t)) {
+            const elf64_ehdr_t *eh = (const elf64_ehdr_t *)img;
+            at_phent = (uint64_t)eh->e_phentsize;
+            at_phnum = (uint64_t)eh->e_phnum;
+
+            uint64_t ph_end = eh->e_phoff + (uint64_t)eh->e_phnum * (uint64_t)eh->e_phentsize;
+            if (ph_end >= eh->e_phoff && ph_end <= img_size && eh->e_phentsize == sizeof(elf64_phdr_t)) {
+                /* Prefer PT_PHDR if present. */
+                for (uint16_t i = 0; i < eh->e_phnum; i++) {
+                    const elf64_phdr_t *ph = (const elf64_phdr_t *)(img + eh->e_phoff + (uint64_t)i * sizeof(elf64_phdr_t));
+                    if (ph->p_type == PT_PHDR) {
+                        at_phdr = ph->p_vaddr;
+                        break;
+                    }
+                }
+
+                /* Fallback: program headers are typically within the first PT_LOAD segment. */
+                if (at_phdr == 0) {
+                    for (uint16_t i = 0; i < eh->e_phnum; i++) {
+                        const elf64_phdr_t *ph = (const elf64_phdr_t *)(img + eh->e_phoff + (uint64_t)i * sizeof(elf64_phdr_t));
+                        if (ph->p_type != PT_LOAD) continue;
+                        if (ph->p_offset != 0) continue;
+
+                        /* Ensure ELF header + phdr table are within this LOAD in file image. */
+                        uint64_t need_end = eh->e_phoff + (uint64_t)eh->e_phnum * sizeof(elf64_phdr_t);
+                        if (need_end <= ph->p_filesz) {
+                            at_phdr = ph->p_vaddr + eh->e_phoff;
+                            break;
+                        }
+                    }
+                }
+
+                /* Validate computed address is within the loaded user range. */
+                if (at_phdr != 0) {
+                    uint64_t need = at_phnum * at_phent;
+                    if (!user_range_ok(at_phdr, need)) {
+                        at_phdr = 0;
+                    }
+                }
+            }
+        }
     }
 
     if (maxva > minva) {
@@ -637,6 +725,11 @@ static uint64_t sys_execve(trap_frame_t *tf, uint64_t pathname_user, uint64_t ar
     uint64_t sp = USER_REGION_BASE + USER_REGION_SIZE;
     uint64_t argv_addrs[MAX_ARGS];
     uint64_t envp_addrs[MAX_ENVP];
+
+    /* Extra auxv-backed strings/blobs placed on the user stack. */
+    uint64_t execfn_addr = 0;
+    uint64_t platform_addr = 0;
+    uint64_t random_addr = 0;
 
     /* Copy strings near the top of the stack so pointers can reference them. */
     for (uint64_t i = 0; i < argc; i++) {
@@ -663,12 +756,112 @@ static uint64_t sys_execve(trap_frame_t *tf, uint64_t pathname_user, uint64_t ar
         envp_addrs[i] = sp;
     }
 
-    /* Align down for pointer writes. */
-    sp = align_down_u64(sp, 8);
+    /* execfn (full path) */
+    {
+        uint64_t len = cstr_len(path) + 1u;
+        sp -= len;
+        if (!user_range_ok(sp, len)) {
+            return (uint64_t)(-(int64_t)E2BIG);
+        }
+        if (write_bytes_to_user(sp, path, len) != 0) {
+            return (uint64_t)(-(int64_t)EFAULT);
+        }
+        execfn_addr = sp;
+    }
 
-    /* auxv: AT_NULL (type=0,val=0) */
+    /* platform */
+    {
+        static const char platform[] = "aarch64";
+        uint64_t len = sizeof(platform);
+        sp -= len;
+        if (!user_range_ok(sp, len)) {
+            return (uint64_t)(-(int64_t)E2BIG);
+        }
+        if (write_bytes_to_user(sp, platform, len) != 0) {
+            return (uint64_t)(-(int64_t)EFAULT);
+        }
+        platform_addr = sp;
+    }
+
+    /* AT_RANDOM: 16 bytes */
+    {
+        uint8_t rnd[16];
+        /* Deterministic placeholder; replace with real entropy if/when available. */
+        for (uint64_t i = 0; i < sizeof(rnd); i++) rnd[i] = (uint8_t)(0xA5u ^ (uint8_t)i);
+        sp -= sizeof(rnd);
+        if (!user_range_ok(sp, sizeof(rnd))) {
+            return (uint64_t)(-(int64_t)E2BIG);
+        }
+        if (write_bytes_to_user(sp, rnd, sizeof(rnd)) != 0) {
+            return (uint64_t)(-(int64_t)EFAULT);
+        }
+        random_addr = sp;
+    }
+
+    /* Align down for pointer writes. */
+    sp = align_down_u64(sp, 16);
+
+    /* auxv terminator first so it ends up last in memory order. */
     sp -= 16u;
-    if (write_u64_to_user(sp + 0, 0) != 0) return (uint64_t)(-(int64_t)EFAULT);
+    if (write_u64_to_user(sp + 0, AT_NULL) != 0) return (uint64_t)(-(int64_t)EFAULT);
+    if (write_u64_to_user(sp + 8, 0) != 0) return (uint64_t)(-(int64_t)EFAULT);
+
+    /* Minimal auxv surface (best-effort). */
+    sp -= 16u;
+    if (write_u64_to_user(sp + 0, AT_SECURE) != 0) return (uint64_t)(-(int64_t)EFAULT);
+    if (write_u64_to_user(sp + 8, 0) != 0) return (uint64_t)(-(int64_t)EFAULT);
+
+    sp -= 16u;
+    if (write_u64_to_user(sp + 0, AT_RANDOM) != 0) return (uint64_t)(-(int64_t)EFAULT);
+    if (write_u64_to_user(sp + 8, random_addr) != 0) return (uint64_t)(-(int64_t)EFAULT);
+
+    sp -= 16u;
+    if (write_u64_to_user(sp + 0, AT_PLATFORM) != 0) return (uint64_t)(-(int64_t)EFAULT);
+    if (write_u64_to_user(sp + 8, platform_addr) != 0) return (uint64_t)(-(int64_t)EFAULT);
+
+    sp -= 16u;
+    if (write_u64_to_user(sp + 0, AT_EXECFN) != 0) return (uint64_t)(-(int64_t)EFAULT);
+    if (write_u64_to_user(sp + 8, execfn_addr) != 0) return (uint64_t)(-(int64_t)EFAULT);
+
+    sp -= 16u;
+    if (write_u64_to_user(sp + 0, AT_PAGESZ) != 0) return (uint64_t)(-(int64_t)EFAULT);
+    if (write_u64_to_user(sp + 8, 4096) != 0) return (uint64_t)(-(int64_t)EFAULT);
+
+    sp -= 16u;
+    if (write_u64_to_user(sp + 0, AT_ENTRY) != 0) return (uint64_t)(-(int64_t)EFAULT);
+    if (write_u64_to_user(sp + 8, entry) != 0) return (uint64_t)(-(int64_t)EFAULT);
+
+    if (at_phent != 0 && at_phnum != 0) {
+        sp -= 16u;
+        if (write_u64_to_user(sp + 0, AT_PHENT) != 0) return (uint64_t)(-(int64_t)EFAULT);
+        if (write_u64_to_user(sp + 8, at_phent) != 0) return (uint64_t)(-(int64_t)EFAULT);
+
+        sp -= 16u;
+        if (write_u64_to_user(sp + 0, AT_PHNUM) != 0) return (uint64_t)(-(int64_t)EFAULT);
+        if (write_u64_to_user(sp + 8, at_phnum) != 0) return (uint64_t)(-(int64_t)EFAULT);
+    }
+
+    if (at_phdr != 0) {
+        sp -= 16u;
+        if (write_u64_to_user(sp + 0, AT_PHDR) != 0) return (uint64_t)(-(int64_t)EFAULT);
+        if (write_u64_to_user(sp + 8, at_phdr) != 0) return (uint64_t)(-(int64_t)EFAULT);
+    }
+
+    /* Identity values for ids (single-user environment). */
+    sp -= 16u;
+    if (write_u64_to_user(sp + 0, AT_UID) != 0) return (uint64_t)(-(int64_t)EFAULT);
+    if (write_u64_to_user(sp + 8, 0) != 0) return (uint64_t)(-(int64_t)EFAULT);
+
+    sp -= 16u;
+    if (write_u64_to_user(sp + 0, AT_EUID) != 0) return (uint64_t)(-(int64_t)EFAULT);
+    if (write_u64_to_user(sp + 8, 0) != 0) return (uint64_t)(-(int64_t)EFAULT);
+
+    sp -= 16u;
+    if (write_u64_to_user(sp + 0, AT_GID) != 0) return (uint64_t)(-(int64_t)EFAULT);
+    if (write_u64_to_user(sp + 8, 0) != 0) return (uint64_t)(-(int64_t)EFAULT);
+
+    sp -= 16u;
+    if (write_u64_to_user(sp + 0, AT_EGID) != 0) return (uint64_t)(-(int64_t)EFAULT);
     if (write_u64_to_user(sp + 8, 0) != 0) return (uint64_t)(-(int64_t)EFAULT);
 
     /* envp NULL */
@@ -714,13 +907,10 @@ static uint64_t sys_clone(trap_frame_t *tf, uint64_t flags, uint64_t child_stack
     (void)ctid;
     (void)tls;
 
-    /* Reject complex clone() uses; allow only the low-byte exit-signal (e.g. SIGCHLD). */
-    const uint64_t forbidden = 0x00000100ull /* CLONE_VM */ |
-                              0x00000200ull /* CLONE_FS */ |
-                              0x00000400ull /* CLONE_FILES */ |
-                              0x00000800ull /* CLONE_SIGHAND */ |
-                              0x00010000ull /* CLONE_THREAD */;
-    if ((flags & forbidden) != 0) {
+    /* Minimal fork-style clone(): allow *only* the low-byte exit signal (e.g. SIGCHLD).
+     * This keeps userland simple and avoids Linux clone() complexity.
+     */
+    if ((flags & ~0xffull) != 0) {
         return (uint64_t)(-(int64_t)ENOSYS);
     }
 
@@ -756,7 +946,7 @@ static uint64_t sys_clone(trap_frame_t *tf, uint64_t flags, uint64_t child_stack
 }
 
 static uint64_t sys_wait4(trap_frame_t *tf, int64_t pid_req, uint64_t wstatus_user, uint64_t options, uint64_t rusage_user, uint64_t elr) {
-    (void)options;
+    const uint64_t WNOHANG = 1ull;
     (void)rusage_user;
 
     /* Only init (proc 0) may wait for the single child. */
@@ -787,6 +977,11 @@ static uint64_t sys_wait4(trap_frame_t *tf, int64_t pid_req, uint64_t wstatus_us
         return cpid;
     }
 
+    /* Non-blocking poll. */
+    if ((options & WNOHANG) != 0) {
+        return 0;
+    }
+
     /* Block parent and switch to child. */
     g_procs[0].state = PROC_WAITING;
     g_procs[0].wait_target_pid = (pid_req == -1) ? 0 : (uint64_t)pid_req;
@@ -795,7 +990,10 @@ static uint64_t sys_wait4(trap_frame_t *tf, int64_t pid_req, uint64_t wstatus_us
     g_procs[0].elr = elr;
 
     proc_switch_to(cidx, tf);
-    return 0; /* return value for the *child* will be in its saved frame */
+    /* We just switched `tf` to the child's saved frame.
+     * Preserve the child's x0 instead of clobbering it with a fake wait4 return value.
+     */
+    return tf->x[0];
 }
 
 static int handle_exit_and_maybe_switch(trap_frame_t *tf, uint64_t code) {
@@ -815,6 +1013,13 @@ static int handle_exit_and_maybe_switch(trap_frame_t *tf, uint64_t code) {
     if (g_procs[0].state == PROC_WAITING) {
         uint64_t wstatus_user = g_procs[0].wait_status_user;
         uint64_t cpid = g_procs[cidx].pid;
+
+        /* If parent waits for a specific pid, only wake when it matches. */
+        uint64_t want = g_procs[0].wait_target_pid;
+        if (want != 0 && want != cpid) {
+            /* Parent isn't waiting for this pid; keep child zombie until reaped. */
+            return 1;
+        }
 
         /* Switch to parent's address space before writing its status/return value. */
         mmu_ttbr0_write(g_procs[0].ttbr0_pa);
