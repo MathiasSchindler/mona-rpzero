@@ -12,17 +12,18 @@ INITRAMFS_DIR := initramfs
 INITRAMFS_ROOT := $(BUILD)/initramfs-root
 
 CFLAGS := -O2 -g -ffreestanding -nostdlib -nostartfiles \
-	-fno-stack-protector -fno-pic -fno-plt -fno-asynchronous-unwind-tables \
+	-std=c11 -fno-builtin -fno-stack-protector -fno-pic -fno-plt -fno-asynchronous-unwind-tables \
 	-mgeneral-regs-only -mstrict-align \
-	-Iinclude -Wall -Wextra -Wno-unused-parameter
+	-Iinclude -Wall -Wextra -Wno-unused-parameter \
+	-Werror=implicit-function-declaration -Werror=implicit-int
 
 # User programs are linked to run at USER_REGION_BASE (identity-mapped in the kernel).
 USER_BASE ?= 0x0000000000400000
 
 
-.PHONY: all clean check-toolchain initramfs
+.PHONY: all clean check-toolchain check-nolibc initramfs
 
-all: $(BUILD)/echo.bin $(BUILD)/true.bin $(BUILD)/cat.bin $(BUILD)/ls.bin $(BUILD)/sh.bin $(BUILD)/init.bin
+all: check-nolibc $(BUILD)/echo.bin $(BUILD)/true.bin $(BUILD)/cat.bin $(BUILD)/ls.bin $(BUILD)/sh.bin $(BUILD)/init.bin
 
 initramfs: $(BUILD)/initramfs.cpio
 
@@ -30,6 +31,21 @@ check-toolchain:
 	@command -v "$(CC)" >/dev/null || { echo "Missing: $(CC)" >&2; exit 2; }
 	@command -v "$(LD)" >/dev/null || { echo "Missing: $(LD)" >&2; exit 2; }
 	@command -v "$(OBJCOPY)" >/dev/null || { echo "Missing: $(OBJCOPY)" >&2; exit 2; }
+
+check-nolibc:
+	@# Prevent accidental libc/glibc dependencies in freestanding userland.
+	@bad_headers=$$(grep -RInE --include='*.c' --include='*.h' '^\s*#\s*include\s*<\s*(stdio|stdlib|string|unistd|fcntl|errno|sys/|time|signal|pthread|dlfcn)\.h\s*>' . || true); \
+	if [[ -n "$$bad_headers" ]]; then \
+		echo "Forbidden libc/glibc headers detected:" >&2; \
+		echo "$$bad_headers" >&2; \
+		exit 2; \
+	fi
+	@bad_syms=$$(grep -RInE --include='*.c' --include='*.h' '\\b(printf|fprintf|snprintf|vprintf|vsnprintf|malloc|free|calloc|realloc|strdup|getenv|system|popen)\\b' . || true); \
+	if [[ -n "$$bad_syms" ]]; then \
+		echo "Forbidden libc-like APIs detected (use raw syscalls / tiny helpers instead):" >&2; \
+		echo "$$bad_syms" >&2; \
+		exit 2; \
+	fi
 
 $(BUILD):
 	@mkdir -p "$(BUILD)"
