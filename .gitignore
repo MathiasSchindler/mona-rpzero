@@ -1,0 +1,39 @@
+# Ignoriere ausgelagerte/archivierte Referenzen und ggf. fremde Kernelbäume
+archive/
+kernel/
+
+# Build-Ausgaben
+kernel-aarch64/build/
+userland/build/
+
+# Generische Build-Artefakte (C/ASM)
+*.o
+*.a
+*.so
+*.d
+*.elf
+*.bin
+*.img
+*.iso
+*.map
+*.sym
+*.lst
+*.dis
+*.dump
+
+# QEMU / Logs / Dumps
+*.log
+*.core
+core
+*.qemu
+
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
