@@ -29,6 +29,3 @@ uint64_t mmu_ttbr0_create_with_user_pa(uint64_t user_pa_base);
 /* Coarse EL0 sandbox region (identity-mapped) used for Phase 3 bring-up. */
 #define USER_REGION_BASE 0x0000000000400000ull
 #define USER_REGION_SIZE 0x0000000000200000ull
-
-/* Physical backing for the first forked child process. */
-#define USER_REGION_CHILD_PA (USER_REGION_BASE + USER_REGION_SIZE)

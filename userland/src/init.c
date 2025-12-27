@@ -7,11 +7,11 @@ int main(int argc, char **argv, char **envp) {
 
     sys_puts("[init] hello\n");
 
-    /* Phase-6 smoke test: run one command via a child process. */
-    sys_puts("[init] selftest: /bin/sh -c \"/bin/echo hello\"\n");
+    /* Phase-7 smoke test: a simple pipeline. */
+    sys_puts("[init] selftest: /bin/sh -c \"/bin/echo hello | /bin/cat\"\n");
     long pid = (long)sys_fork();
     if (pid == 0) {
-        const char *const test_argv[] = {"sh", "-c", "/bin/echo hello", 0};
+        const char *const test_argv[] = {"sh", "-c", "/bin/echo hello | /bin/cat", 0};
         (void)sys_execve("/bin/sh", test_argv, 0);
         sys_puts("[init] selftest execve failed\n");
         sys_exit_group(127);

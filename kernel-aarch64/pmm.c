@@ -6,8 +6,6 @@
 /* Phase 3: reserve a coarse 2MiB EL0 user sandbox region (identity-mapped). */
 #define USER_REGION_BASE 0x00400000ull
 #define USER_REGION_SIZE 0x00200000ull
-/* Reserve a second 2MiB physical window for a forked child. */
-#define USER_REGION_CHILD_PA (USER_REGION_BASE + USER_REGION_SIZE)
 
 /*
  * Simple bitmap PMM.
@@ -144,11 +142,60 @@ void pmm_init(uint64_t mem_base, uint64_t mem_size, uint64_t kernel_start, uint6
     /* Reserve a user region for EL0 bring-up. */
     reserve_range(USER_REGION_BASE, USER_REGION_BASE + USER_REGION_SIZE);
 
-    /* Reserve child user backing memory (mapped via per-process TTBR0). */
-    reserve_range(USER_REGION_CHILD_PA, USER_REGION_CHILD_PA + USER_REGION_SIZE);
-
     uart_write("pmm: initialized\n");
     pmm_dump();
+}
+
+uint64_t pmm_alloc_2mib_aligned(void) {
+    /* 2MiB = 512 * 4KiB pages. Require 2MiB alignment. */
+    const uint64_t pages = 512ull;
+    if (g_info.free_pages < pages || g_info.total_pages == 0) {
+        return 0;
+    }
+
+    for (uint64_t start = 0; start + pages <= g_info.total_pages; ) {
+        /* Align candidate start index to 2MiB boundary in page units. */
+        uint64_t aligned = (start + (pages - 1)) & ~(pages - 1);
+        start = aligned;
+
+        if (start + pages > g_info.total_pages) {
+            break;
+        }
+
+        int ok = 1;
+        for (uint64_t i = 0; i < pages; i++) {
+            if (bit_test(start + i)) {
+                ok = 0;
+                break;
+            }
+        }
+
+        if (ok) {
+            for (uint64_t i = 0; i < pages; i++) {
+                bit_set(start + i);
+            }
+            g_info.free_pages -= pages;
+            return g_info.base + start * PMM_PAGE_SIZE;
+        }
+
+        /* Advance to next 2MiB boundary. */
+        start += pages;
+    }
+
+    return 0;
+}
+
+void pmm_free_2mib_aligned(uint64_t pa_base) {
+    if (pa_base == 0) {
+        return;
+    }
+    if ((pa_base & 0x1FFFFFull) != 0) {
+        return;
+    }
+
+    for (uint64_t i = 0; i < 512ull; i++) {
+        pmm_free_page(pa_base + i * PMM_PAGE_SIZE);
+    }
 }
 
 uint64_t pmm_alloc_page(void) {

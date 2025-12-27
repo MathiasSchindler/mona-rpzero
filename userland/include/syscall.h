@@ -18,8 +18,10 @@ uint64_t __syscall4_uppu(uint64_t nr, uint64_t a0, const void *p1, void *p2, uin
 uint64_t __syscall4_upup(uint64_t nr, uint64_t a0, void *p1, uint64_t a2, void *p3);
 
 /* Linux AArch64 syscall numbers */
+#define __NR_dup3      24ull
 #define __NR_openat    56ull
 #define __NR_close     57ull
+#define __NR_pipe2     59ull
 #define __NR_getdents64 61ull
 #define __NR_lseek     62ull
 #define __NR_read      63ull
@@ -37,6 +39,18 @@ static inline uint64_t sys_openat(uint64_t dirfd, const char *pathname, uint64_t
 
 static inline uint64_t sys_close(uint64_t fd) {
     return __syscall1(__NR_close, fd);
+}
+
+static inline uint64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags) {
+    return __syscall3(__NR_dup3, oldfd, newfd, flags);
+}
+
+static inline uint64_t sys_dup2(uint64_t oldfd, uint64_t newfd) {
+    return sys_dup3(oldfd, newfd, 0);
+}
+
+static inline uint64_t sys_pipe2(int pipefd[2], uint64_t flags) {
+    return __syscall2(__NR_pipe2, (uint64_t)(uintptr_t)pipefd, flags);
 }
 
 static inline uint64_t sys_read(uint64_t fd, void *buf, uint64_t len) {

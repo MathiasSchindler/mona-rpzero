@@ -293,6 +293,8 @@ Notes:
 
 ### Phase 7 — Pipes + fd duplication
 
+Status: DONE (2025-12-27)
+
 Deliverables:
 
 - `pipe2`, `dup2`
@@ -301,6 +303,11 @@ Deliverables:
 Acceptance:
 
 - `/bin/sh -c "/bin/echo hello | /bin/cat"` works.
+
+Notes:
+
+- `pipe2` currently supports `flags=0` only.
+- Pipe reads use a simple non-blocking style (`-EAGAIN` when empty but writers exist); userland retries.
 
 ### Phase 8 — Compatibility hardening
 
