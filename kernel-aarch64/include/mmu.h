@@ -1,6 +1,6 @@
 #pragma once
 
-#include <stdint.h>
+#include "stdint.h"
 
 /*
  * Minimal MMU bring-up for AArch64 EL1.

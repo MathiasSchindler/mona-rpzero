@@ -1,7 +1,7 @@
 #pragma once
 
-#include <stddef.h>
-#include <stdint.h>
+#include "stddef.h"
+#include "stdint.h"
 
 void initramfs_init(const void *archive, size_t archive_size);
 

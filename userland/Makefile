@@ -24,7 +24,7 @@ USER_BASE ?= 0x0000000000400000
 
 .PHONY: all clean check-toolchain check-nolibc initramfs
 
-all: check-nolibc $(BUILD)/echo.bin $(BUILD)/true.bin $(BUILD)/cat.bin $(BUILD)/ls.bin $(BUILD)/pid.bin $(BUILD)/uname.bin $(BUILD)/sh.bin $(BUILD)/init.bin
+all: check-nolibc $(BUILD)/echo.bin $(BUILD)/true.bin $(BUILD)/cat.bin $(BUILD)/ls.bin $(BUILD)/pid.bin $(BUILD)/uname.bin $(BUILD)/brk.bin $(BUILD)/mmap.bin $(BUILD)/sh.bin $(BUILD)/init.bin
 
 initramfs: $(BUILD)/initramfs.cpio
 
@@ -78,6 +78,12 @@ $(BUILD)/pid.o: src/pid.c include/syscall.h | $(BUILD)
 $(BUILD)/uname.o: src/uname.c include/syscall.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(BUILD)/brk.o: src/brk.c include/syscall.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/mmap.o: src/mmap.c include/syscall.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
 $(BUILD)/init.o: src/init.c include/syscall.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -100,6 +106,12 @@ $(BUILD)/pid.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BU
 	$(LD) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
 
 $(BUILD)/uname.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/uname.o | check-toolchain
+	$(LD) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+
+$(BUILD)/brk.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/brk.o | check-toolchain
+	$(LD) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+
+$(BUILD)/mmap.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/mmap.o | check-toolchain
 	$(LD) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
 
 $(BUILD)/init.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/init.o | check-toolchain
@@ -126,6 +138,12 @@ $(BUILD)/pid.bin: $(BUILD)/pid.elf | check-toolchain
 $(BUILD)/uname.bin: $(BUILD)/uname.elf | check-toolchain
 	$(OBJCOPY) -O binary $< $@
 
+$(BUILD)/brk.bin: $(BUILD)/brk.elf | check-toolchain
+	$(OBJCOPY) -O binary $< $@
+
+$(BUILD)/mmap.bin: $(BUILD)/mmap.elf | check-toolchain
+	$(OBJCOPY) -O binary $< $@
+
 $(BUILD)/init.bin: $(BUILD)/init.elf | check-toolchain
 	$(OBJCOPY) -O binary $< $@
 
@@ -141,6 +159,8 @@ $(BUILD)/initramfs.cpio: $(TOOLS_DIR)/mkcpio_newc.py all | $(BUILD)
 	@cp "$(BUILD)/ls.elf"   "$(INITRAMFS_ROOT)/bin/ls"
 	@cp "$(BUILD)/pid.elf"  "$(INITRAMFS_ROOT)/bin/pid"
 	@cp "$(BUILD)/uname.elf"  "$(INITRAMFS_ROOT)/bin/uname"
+	@cp "$(BUILD)/brk.elf"  "$(INITRAMFS_ROOT)/bin/brk"
+	@cp "$(BUILD)/mmap.elf"  "$(INITRAMFS_ROOT)/bin/mmap"
 	@cp "$(BUILD)/sh.elf"   "$(INITRAMFS_ROOT)/bin/sh"
 	@cp "$(BUILD)/init.elf" "$(INITRAMFS_ROOT)/init"
 	python3 $(TOOLS_DIR)/mkcpio_newc.py --root "$(INITRAMFS_ROOT)" --out $@

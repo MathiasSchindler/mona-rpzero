@@ -9,6 +9,7 @@ uint64_t __syscall2(uint64_t nr, uint64_t a0, uint64_t a1);
 uint64_t __syscall3(uint64_t nr, uint64_t a0, uint64_t a1, uint64_t a2);
 uint64_t __syscall4(uint64_t nr, uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3);
 uint64_t __syscall5(uint64_t nr, uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4);
+uint64_t __syscall6(uint64_t nr, uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5);
 
 /* Typed-pointer variants to preserve aliasing information (avoid uintptr_t casts). */
 uint64_t __syscall3_p(uint64_t nr, uint64_t a0, void *p1, uint64_t a2);
@@ -31,8 +32,11 @@ uint64_t __syscall4_upup(uint64_t nr, uint64_t a0, void *p1, uint64_t a2, void *
 #define __NR_uname     160ull
 #define __NR_getpid     172ull
 #define __NR_getppid    173ull
+#define __NR_brk        214ull
+#define __NR_munmap     215ull
 #define __NR_clone      220ull
 #define __NR_execve     221ull
+#define __NR_mmap       222ull
 #define __NR_wait4      260ull
 #define __NR_exit       93ull
 #define __NR_exit_group 94ull
@@ -67,6 +71,30 @@ static inline uint64_t sys_uname(linux_utsname_t *buf) {
 
 static inline uint64_t sys_clock_gettime(uint64_t clockid, linux_timespec_t *tp) {
     return __syscall2(__NR_clock_gettime, clockid, (uint64_t)(uintptr_t)tp);
+}
+
+static inline uint64_t sys_brk(void *addr) {
+    return __syscall1(__NR_brk, (uint64_t)(uintptr_t)addr);
+}
+
+static inline uint64_t sys_mmap(void *addr,
+                               uint64_t len,
+                               uint64_t prot,
+                               uint64_t flags,
+                               int64_t fd,
+                               uint64_t off) {
+    return __syscall6(
+        __NR_mmap,
+        (uint64_t)(uintptr_t)addr,
+        len,
+        prot,
+        flags,
+        (uint64_t)fd,
+        off);
+}
+
+static inline uint64_t sys_munmap(void *addr, uint64_t len) {
+    return __syscall2(__NR_munmap, (uint64_t)(uintptr_t)addr, len);
 }
 
 static inline uint64_t sys_openat(uint64_t dirfd, const char *pathname, uint64_t flags, uint64_t mode) {

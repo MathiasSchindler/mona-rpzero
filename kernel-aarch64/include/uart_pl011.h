@@ -1,6 +1,6 @@
 #pragma once
 
-#include <stdint.h>
+#include "stdint.h"
 
 /*
  * PL011 UART base address for BCM283x in the 0x3Fxxxxxx peripheral window.

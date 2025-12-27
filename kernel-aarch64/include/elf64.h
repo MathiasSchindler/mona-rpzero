@@ -1,7 +1,7 @@
 #pragma once
 
-#include <stddef.h>
-#include <stdint.h>
+#include "stddef.h"
+#include "stdint.h"
 
 /* Minimal ELF64 definitions for an AArch64 ET_EXEC loader (initramfs-backed). */
 

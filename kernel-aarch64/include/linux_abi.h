@@ -1,6 +1,6 @@
 #pragma once
 
-#include <stdint.h>
+#include "stdint.h"
 
 /* Minimal Linux ABI structs/constants we use for syscalls. */
 

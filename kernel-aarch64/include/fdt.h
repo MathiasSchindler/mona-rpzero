@@ -1,6 +1,6 @@
 #pragma once
 
-#include <stdint.h>
+#include "stdint.h"
 
 /*
  * Minimal Flattened Device Tree (FDT/DTB) reader.

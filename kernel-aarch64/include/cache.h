@@ -1,6 +1,6 @@
 #pragma once
 
-#include <stdint.h>
+#include "stdint.h"
 
 /* Cache maintenance helpers for AArch64 EL1 bring-up. */
 

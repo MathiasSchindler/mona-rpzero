@@ -329,8 +329,9 @@ Acceptance:
 
 Notes:
 
-- Implemented: `getpid/getppid`, `uname`, `clock_gettime` (currently returns zero time for realtime/monotonic).
-- Userland smoke tests: `/bin/pid` and `/bin/uname`.
+- Implemented: `getpid/getppid`, `uname`, `clock_gettime` (currently returns zero time for realtime/monotonic), `brk`.
+- Implemented (minimal): anonymous `mmap/munmap` (private+anonymous only, `addr=0` only, no file-backed mappings, no actual unmapping of pages yet — purely an address-space allocator to keep basic programs happy).
+- Userland smoke tests: `/bin/pid`, `/bin/uname`, `/bin/brk`, `/bin/mmap`.
 
 ### Phase 9 — Move from QEMU to real Zero 2 W
 
@@ -362,10 +363,10 @@ This repo currently contains tooling and a Linux kernel image used for QEMU brin
 
 ## Near-term next action
 
-- Move to Phase 7 (pipes + fd duplication):
-  - implement `pipe2` and `dup2`
-  - teach the tiny shell to handle a single pipeline (`cmd1 | cmd2`) using those syscalls
-  - acceptance: `/bin/sh -c "/bin/echo hello | /bin/cat"` works
+- Continue Phase 8 (syscall gaps for “boring” binaries):
+  - `getcwd`/`chdir`
+  - `nanosleep` (or a minimal sleep helper)
+  - small `ioctl` subset for tty detection (enough for common shells/tools)
 
 ## SMP-friendly evolution plan (avoid big rewrites)
 

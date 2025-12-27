@@ -21,8 +21,11 @@
 #define __NR_uname     160ull
 #define __NR_getpid     172ull
 #define __NR_getppid    173ull
+#define __NR_brk        214ull
+#define __NR_munmap     215ull
 #define __NR_clone      220ull
 #define __NR_execve     221ull
+#define __NR_mmap       222ull
 #define __NR_wait4      260ull
 #define __NR_exit       93ull
 #define __NR_exit_group 94ull
@@ -40,6 +43,7 @@
 #define EISDIR 21ull
 #define ENOEXEC 8ull
 #define E2BIG 7ull
+#define ENOMEM 12ull
 
 #define AT_FDCWD ((int64_t)-100)
 
@@ -49,7 +53,14 @@ enum {
     MAX_FILEDESCS = 64,
     MAX_PIPES = 16,
     PIPE_BUF = 1024,
+    MAX_VMAS = 32,
 };
+
+typedef struct {
+    uint8_t used;
+    uint64_t base;
+    uint64_t len;
+} vma_t;
 
 typedef enum {
     FDESC_UNUSED = 0,
@@ -112,6 +123,11 @@ typedef struct {
     proc_state_t state;
     uint64_t ttbr0_pa;
     uint64_t user_pa_base;
+    uint64_t heap_base;
+    uint64_t heap_end;
+    uint64_t stack_low;
+    uint64_t mmap_next;
+    vma_t vmas[MAX_VMAS];
     trap_frame_t tf;
     uint64_t elr;
     uint64_t exit_code;
@@ -169,6 +185,15 @@ static void proc_clear(proc_t *p) {
     p->state = PROC_UNUSED;
     p->ttbr0_pa = 0;
     p->user_pa_base = 0;
+    p->heap_base = 0;
+    p->heap_end = 0;
+    p->stack_low = 0;
+    p->mmap_next = 0;
+    for (uint64_t i = 0; i < MAX_VMAS; i++) {
+        p->vmas[i].used = 0;
+        p->vmas[i].base = 0;
+        p->vmas[i].len = 0;
+    }
     tf_zero(&p->tf);
     p->elr = 0;
     p->exit_code = 0;
@@ -334,6 +359,10 @@ static uint64_t align_down_u64(uint64_t x, uint64_t a) {
     return x & ~(a - 1u);
 }
 
+static uint64_t align_up_u64(uint64_t x, uint64_t a) {
+    return (x + (a - 1u)) & ~(a - 1u);
+}
+
 static const char *exc_kind_name(unsigned long kind) {
     switch (kind) {
         case 0: return "sync el1t";
@@ -455,6 +484,10 @@ static void proc_init_if_needed(uint64_t elr, trap_frame_t *tf) {
     g_procs[0].state = PROC_RUNNABLE;
     g_procs[0].ttbr0_pa = mmu_ttbr0_read();
     g_procs[0].user_pa_base = USER_REGION_BASE;
+    /* Heap is initialized on first execve(). */
+    g_procs[0].heap_base = 0;
+    g_procs[0].heap_end = 0;
+    g_procs[0].stack_low = tf->sp_el0;
     tf_copy(&g_procs[0].tf, tf);
     g_procs[0].elr = elr;
 
@@ -473,6 +506,181 @@ static void proc_init_if_needed(uint64_t elr, trap_frame_t *tf) {
     }
 
     g_proc_inited = 1;
+}
+
+static uint64_t sys_brk(uint64_t newbrk) {
+    proc_t *cur = &g_procs[g_cur_proc];
+
+    /* Lazy init for pre-execve callers: keep it within user region. */
+    if (cur->heap_base == 0) {
+        cur->heap_base = align_up_u64(USER_REGION_BASE, 16);
+        cur->heap_end = cur->heap_base;
+    }
+    if (cur->stack_low == 0) {
+        cur->stack_low = cur->tf.sp_el0;
+    }
+
+    if (newbrk == 0) {
+        return cur->heap_end;
+    }
+
+    /* Simple safety gap to reduce heap/stack collisions without full VM. */
+    const uint64_t STACK_GUARD = 256u * 1024u;
+    uint64_t max_brk = USER_REGION_BASE + USER_REGION_SIZE;
+    if (cur->stack_low > USER_REGION_BASE + STACK_GUARD) {
+        uint64_t lim = cur->stack_low - STACK_GUARD;
+        if (lim < max_brk) max_brk = lim;
+    }
+
+    newbrk = align_up_u64(newbrk, 16);
+    if (newbrk < cur->heap_base || newbrk > max_brk) {
+        /* Linux brk returns the current program break on failure. */
+        return cur->heap_end;
+    }
+
+    cur->heap_end = newbrk;
+    return cur->heap_end;
+}
+
+static int vma_overlaps(proc_t *p, uint64_t base, uint64_t len, uint64_t *out_overlap_base) {
+    uint64_t end = base + len;
+    for (uint64_t i = 0; i < MAX_VMAS; i++) {
+        if (!p->vmas[i].used) continue;
+        uint64_t b = p->vmas[i].base;
+        uint64_t e = b + p->vmas[i].len;
+        if (!(end <= b || base >= e)) {
+            if (out_overlap_base) *out_overlap_base = b;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static uint64_t proc_mmap_hi(proc_t *p) {
+    const uint64_t PAGE = 4096u;
+    const uint64_t STACK_GUARD = 256u * 1024u;
+    uint64_t hi = USER_REGION_BASE + USER_REGION_SIZE;
+    if (p->stack_low > USER_REGION_BASE + STACK_GUARD) {
+        uint64_t lim = p->stack_low - STACK_GUARD;
+        if (lim < hi) hi = lim;
+    }
+    hi = align_down_u64(hi, PAGE);
+    if (hi < USER_REGION_BASE) hi = USER_REGION_BASE;
+    return hi;
+}
+
+static uint64_t proc_recompute_mmap_next(proc_t *p) {
+    uint64_t top = proc_mmap_hi(p);
+    for (;;) {
+        int found = 0;
+        for (uint64_t i = 0; i < MAX_VMAS; i++) {
+            if (!p->vmas[i].used) continue;
+            uint64_t end = p->vmas[i].base + p->vmas[i].len;
+            if (end == top) {
+                top = p->vmas[i].base;
+                found = 1;
+                break;
+            }
+        }
+        if (!found) break;
+    }
+    return top;
+}
+
+static uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, int64_t fd, uint64_t off) {
+    (void)prot;
+    (void)off;
+
+    const uint64_t PAGE = 4096u;
+    const uint64_t MAP_PRIVATE = 0x02u;
+    const uint64_t MAP_ANONYMOUS = 0x20u;
+    const uint64_t HEAP_GUARD = 64u * 1024u;
+
+    if (len == 0) return (uint64_t)(-(int64_t)EINVAL);
+    if (addr != 0) return (uint64_t)(-(int64_t)ENOSYS);
+    if (fd != -1) return (uint64_t)(-(int64_t)ENOSYS);
+
+    /* Support only anonymous private mappings for now. */
+    if ((flags & (MAP_PRIVATE | MAP_ANONYMOUS)) != (MAP_PRIVATE | MAP_ANONYMOUS)) {
+        return (uint64_t)(-(int64_t)ENOSYS);
+    }
+    if ((flags & ~(MAP_PRIVATE | MAP_ANONYMOUS)) != 0) {
+        return (uint64_t)(-(int64_t)ENOSYS);
+    }
+
+    proc_t *p = &g_procs[g_cur_proc];
+    uint64_t alen = align_up_u64(len, PAGE);
+
+    /* Lazy init. */
+    if (p->mmap_next == 0) {
+        p->mmap_next = proc_mmap_hi(p);
+    } else {
+        /* Stack may have moved; tighten the ceiling if needed. */
+        uint64_t hi = proc_mmap_hi(p);
+        if (p->mmap_next > hi) p->mmap_next = hi;
+    }
+
+    uint64_t end = align_down_u64(p->mmap_next, PAGE);
+    for (;;) {
+        if (end < USER_REGION_BASE + alen) {
+            return (uint64_t)(-(int64_t)ENOMEM);
+        }
+        uint64_t base = align_down_u64(end - alen, PAGE);
+
+        /* Keep mmap area above the current brk heap (simple split). */
+        uint64_t heap_lim = p->heap_end;
+        if (heap_lim < p->heap_base) heap_lim = p->heap_base;
+        heap_lim = align_up_u64(heap_lim, PAGE);
+        if (base < heap_lim + HEAP_GUARD) {
+            return (uint64_t)(-(int64_t)ENOMEM);
+        }
+
+        uint64_t ovb = 0;
+        if (vma_overlaps(p, base, alen, &ovb)) {
+            /* Move below the overlapping region and retry. */
+            end = align_down_u64(ovb, PAGE);
+            continue;
+        }
+
+        int slot = -1;
+        for (uint64_t i = 0; i < MAX_VMAS; i++) {
+            if (!p->vmas[i].used) {
+                slot = (int)i;
+                break;
+            }
+        }
+        if (slot < 0) {
+            return (uint64_t)(-(int64_t)ENOMEM);
+        }
+
+        p->vmas[slot].used = 1;
+        p->vmas[slot].base = base;
+        p->vmas[slot].len = alen;
+        p->mmap_next = base;
+        return base;
+    }
+}
+
+static uint64_t sys_munmap(uint64_t addr, uint64_t len) {
+    const uint64_t PAGE = 4096u;
+    if ((addr & (PAGE - 1u)) != 0) return (uint64_t)(-(int64_t)EINVAL);
+    if (len == 0) return (uint64_t)(-(int64_t)EINVAL);
+
+    uint64_t alen = align_up_u64(len, PAGE);
+    proc_t *p = &g_procs[g_cur_proc];
+
+    for (uint64_t i = 0; i < MAX_VMAS; i++) {
+        if (!p->vmas[i].used) continue;
+        if (p->vmas[i].base == addr && p->vmas[i].len == alen) {
+            p->vmas[i].used = 0;
+            p->vmas[i].base = 0;
+            p->vmas[i].len = 0;
+            p->mmap_next = proc_recompute_mmap_next(p);
+            return 0;
+        }
+    }
+
+    return (uint64_t)(-(int64_t)EINVAL);
 }
 
 static int proc_find_free_slot(void) {
@@ -1575,6 +1783,9 @@ uint64_t exception_handle(trap_frame_t *tf,
     proc_init_if_needed(elr, tf);
     g_procs[g_cur_proc].elr = elr;
     tf_copy(&g_procs[g_cur_proc].tf, tf);
+    if (g_procs[g_cur_proc].stack_low == 0 || tf->sp_el0 < g_procs[g_cur_proc].stack_low) {
+        g_procs[g_cur_proc].stack_low = tf->sp_el0;
+    }
 
     uint64_t nr = tf->x[8];
     uint64_t a0 = tf->x[0];
@@ -1582,12 +1793,25 @@ uint64_t exception_handle(trap_frame_t *tf,
     uint64_t a2 = tf->x[2];
     uint64_t a3 = tf->x[3];
     uint64_t a4 = tf->x[4];
+    uint64_t a5 = tf->x[5];
 
     uint64_t ret = 0;
     int set_x0_ret = 1;
     int update_saved_elr = 1;
 
     switch (nr) {
+        case __NR_brk:
+            ret = sys_brk(a0);
+            break;
+
+        case __NR_mmap:
+            ret = sys_mmap(a0, a1, a2, a3, (int64_t)a4, a5);
+            break;
+
+        case __NR_munmap:
+            ret = sys_munmap(a0, a1);
+            break;
+
         case __NR_getpid:
             ret = g_procs[g_cur_proc].pid;
             break;

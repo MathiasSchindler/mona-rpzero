@@ -121,3 +121,17 @@ __syscall5:
     mov x4, x5
     svc #0
     ret
+
+.global __syscall6
+.type __syscall6, %function
+__syscall6:
+    /* x0 = nr, x1 = a0, x2 = a1, x3 = a2, x4 = a3, x5 = a4, x6 = a5 */
+    mov x8, x0
+    mov x0, x1
+    mov x1, x2
+    mov x2, x3
+    mov x3, x4
+    mov x4, x5
+    mov x5, x6
+    svc #0
+    ret

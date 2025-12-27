@@ -1,6 +1,6 @@
 #pragma once
 
-#include <stdint.h>
+#include "stdint.h"
 
 typedef struct trap_frame {
     uint64_t x[31];
