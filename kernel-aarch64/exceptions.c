@@ -8,7 +8,10 @@
 #include "cache.h"
 
 /* Linux AArch64 syscall numbers we care about first. */
+#define __NR_getcwd    17ull
+#define __NR_ioctl     29ull
 #define __NR_dup3      24ull
+#define __NR_chdir     49ull
 #define __NR_openat    56ull
 #define __NR_close     57ull
 #define __NR_pipe2     59ull
@@ -17,6 +20,7 @@
 #define __NR_read      63ull
 #define __NR_write      64ull
 #define __NR_newfstatat 79ull
+#define __NR_nanosleep 101ull
 #define __NR_clock_gettime 113ull
 #define __NR_uname     160ull
 #define __NR_getpid     172ull
@@ -31,19 +35,23 @@
 #define __NR_exit_group 94ull
 
 /* errno values (Linux) */
+#define E2BIG 7ull
+#define ENOEXEC 8ull
 #define EBADF 9ull
 #define ECHILD 10ull
-#define EFAULT 14ull
-#define ENOENT 2ull
-#define EPIPE 32ull
-#define ENOSYS 38ull
-#define EMFILE 24ull
 #define EAGAIN 11ull
-#define EINVAL 22ull
-#define EISDIR 21ull
-#define ENOEXEC 8ull
-#define E2BIG 7ull
 #define ENOMEM 12ull
+#define EFAULT 14ull
+#define ENOTDIR 20ull
+#define EISDIR 21ull
+#define EINVAL 22ull
+#define EMFILE 24ull
+#define ENOTTY 25ull
+#define EPIPE 32ull
+#define ERANGE 34ull
+#define ENAMETOOLONG 36ull
+#define ENOENT 2ull
+#define ENOSYS 38ull
 
 #define AT_FDCWD ((int64_t)-100)
 
@@ -54,6 +62,7 @@ enum {
     MAX_PIPES = 16,
     PIPE_BUF = 1024,
     MAX_VMAS = 32,
+    MAX_PATH = 256,
 };
 
 typedef struct {
@@ -126,6 +135,7 @@ typedef struct {
     uint64_t heap_base;
     uint64_t heap_end;
     uint64_t stack_low;
+    char cwd[MAX_PATH];
     uint64_t mmap_next;
     vma_t vmas[MAX_VMAS];
     trap_frame_t tf;
@@ -188,6 +198,8 @@ static void proc_clear(proc_t *p) {
     p->heap_base = 0;
     p->heap_end = 0;
     p->stack_low = 0;
+    p->cwd[0] = '/';
+    p->cwd[1] = '\0';
     p->mmap_next = 0;
     for (uint64_t i = 0; i < MAX_VMAS; i++) {
         p->vmas[i].used = 0;
@@ -202,6 +214,102 @@ static void proc_clear(proc_t *p) {
     for (uint64_t i = 0; i < MAX_FDS; i++) {
         p->fdt.fd_to_desc[i] = -1;
     }
+}
+
+static uint64_t cstr_len_u64(const char *s) {
+    uint64_t n = 0;
+    while (s[n] != '\0') n++;
+    return n;
+}
+
+static int cstr_starts_with(const char *s, char c) {
+    return s[0] == c;
+}
+
+static int normalize_abs_path(const char *in, char *out, uint64_t outsz) {
+    if (outsz < 2) return -1;
+
+    uint64_t seg_slash[64];
+    uint64_t depth = 0;
+    uint64_t o = 0;
+    out[0] = '\0';
+
+    const char *p = in;
+    while (*p != '\0') {
+        while (*p == '/') p++;
+        if (*p == '\0') break;
+
+        const char *seg = p;
+        uint64_t seglen = 0;
+        while (*p != '\0' && *p != '/') {
+            p++;
+            seglen++;
+        }
+
+        if (seglen == 1 && seg[0] == '.') {
+            continue;
+        }
+        if (seglen == 2 && seg[0] == '.' && seg[1] == '.') {
+            if (depth > 0) {
+                o = seg_slash[--depth];
+                out[o] = '\0';
+            }
+            continue;
+        }
+
+        if (o + 1 >= outsz) return -1;
+        out[o++] = '/';
+        if (depth < (uint64_t)(sizeof(seg_slash) / sizeof(seg_slash[0]))) {
+            seg_slash[depth++] = o - 1;
+        } else {
+            return -1;
+        }
+
+        if (o + seglen >= outsz) return -1;
+        for (uint64_t i = 0; i < seglen; i++) {
+            out[o++] = seg[i];
+        }
+        out[o] = '\0';
+    }
+
+    if (o == 0) {
+        out[0] = '/';
+        out[1] = '\0';
+    }
+    return 0;
+}
+
+static int resolve_path(proc_t *p, const char *in, char *out, uint64_t outsz) {
+    if (!p || !in || !out) return -1;
+
+    char tmp[MAX_PATH];
+    tmp[0] = '\0';
+
+    if (cstr_starts_with(in, '/')) {
+        /* Already absolute. */
+        uint64_t n = cstr_len_u64(in);
+        if (n + 1 > sizeof(tmp)) return -1;
+        for (uint64_t i = 0; i <= n; i++) tmp[i] = in[i];
+    } else {
+        uint64_t cwd_len = cstr_len_u64(p->cwd);
+        uint64_t in_len = cstr_len_u64(in);
+
+        /* tmp = cwd + "/" + in, allowing cwd=="/". */
+        if (cwd_len == 0) {
+            return -1;
+        }
+
+        uint64_t need = cwd_len + 1 + in_len + 1;
+        if (need > sizeof(tmp)) return -1;
+
+        uint64_t o = 0;
+        for (uint64_t i = 0; i < cwd_len; i++) tmp[o++] = p->cwd[i];
+        tmp[o++] = '/';
+        for (uint64_t i = 0; i < in_len; i++) tmp[o++] = in[i];
+        tmp[o] = '\0';
+    }
+
+    return normalize_abs_path(tmp, out, outsz);
 }
 
 static void desc_clear(file_desc_t *d) {
@@ -715,6 +823,138 @@ static void sched_maybe_switch(trap_frame_t *tf) {
     }
 }
 
+static uint64_t sys_getcwd(uint64_t buf_user, uint64_t size) {
+    proc_t *cur = &g_procs[g_cur_proc];
+    uint64_t n = cstr_len_u64(cur->cwd);
+    if (size == 0) return (uint64_t)(-(int64_t)EINVAL);
+    if (n + 1 > size) return (uint64_t)(-(int64_t)ERANGE);
+    if (!user_range_ok(buf_user, n + 1)) return (uint64_t)(-(int64_t)EFAULT);
+    if (write_bytes_to_user(buf_user, cur->cwd, n + 1) != 0) return (uint64_t)(-(int64_t)EFAULT);
+    return buf_user;
+}
+
+static uint64_t sys_chdir(uint64_t path_user) {
+    char in[MAX_PATH];
+    if (copy_cstr_from_user(in, sizeof(in), path_user) != 0) {
+        return (uint64_t)(-(int64_t)EFAULT);
+    }
+
+    proc_t *cur = &g_procs[g_cur_proc];
+    char path[MAX_PATH];
+    if (resolve_path(cur, in, path, sizeof(path)) != 0) {
+        return (uint64_t)(-(int64_t)EINVAL);
+    }
+
+    const uint8_t *data = 0;
+    uint64_t size = 0;
+    uint32_t mode = 0;
+    if (initramfs_lookup(path, &data, &size, &mode) != 0) {
+        return (uint64_t)(-(int64_t)ENOENT);
+    }
+    if ((mode & 0170000u) != 0040000u) {
+        return (uint64_t)(-(int64_t)ENOTDIR);
+    }
+
+    uint64_t n = cstr_len_u64(path);
+    if (n + 1 > sizeof(cur->cwd)) {
+        return (uint64_t)(-(int64_t)ENAMETOOLONG);
+    }
+    for (uint64_t i = 0; i <= n; i++) {
+        cur->cwd[i] = path[i];
+    }
+    return 0;
+}
+
+static uint64_t sys_nanosleep(uint64_t req_user, uint64_t rem_user) {
+    if (req_user == 0) return (uint64_t)(-(int64_t)EFAULT);
+    if (!user_range_ok(req_user, (uint64_t)sizeof(linux_timespec_t))) {
+        return (uint64_t)(-(int64_t)EFAULT);
+    }
+
+    linux_timespec_t req;
+    {
+        volatile const uint8_t *src = (volatile const uint8_t *)(uintptr_t)req_user;
+        volatile uint8_t *dst = (volatile uint8_t *)&req;
+        for (uint64_t i = 0; i < sizeof(req); i++) dst[i] = src[i];
+    }
+
+    if (req.tv_nsec < 0 || req.tv_nsec >= 1000000000ll) {
+        return (uint64_t)(-(int64_t)EINVAL);
+    }
+
+    /* No timer yet: return immediately. If rem is provided, report 0 remaining. */
+    if (rem_user != 0) {
+        if (!user_range_ok(rem_user, (uint64_t)sizeof(linux_timespec_t))) {
+            return (uint64_t)(-(int64_t)EFAULT);
+        }
+        linux_timespec_t rem;
+        rem.tv_sec = 0;
+        rem.tv_nsec = 0;
+        if (write_bytes_to_user(rem_user, &rem, sizeof(rem)) != 0) {
+            return (uint64_t)(-(int64_t)EFAULT);
+        }
+    }
+    return 0;
+}
+
+static uint64_t sys_ioctl(uint64_t fd, uint64_t req, uint64_t argp_user) {
+    proc_t *cur = &g_procs[g_cur_proc];
+    int didx = fd_get_desc_idx(cur, fd);
+    if (didx < 0) {
+        return (uint64_t)(-(int64_t)EBADF);
+    }
+
+    file_desc_t *d = &g_descs[didx];
+    if (d->kind != FDESC_UART) {
+        return (uint64_t)(-(int64_t)ENOTTY);
+    }
+
+    /* Common tty requests used for isatty() / shell probing. */
+    const uint64_t TCGETS = 0x5401u;
+    const uint64_t TIOCGWINSZ = 0x5413u;
+    const uint64_t TIOCGPGRP = 0x540Fu;
+
+    if (req == TCGETS) {
+        /* struct termios is 60 bytes on AArch64. Return zeros (reasonable defaults). */
+        if (argp_user == 0) return (uint64_t)(-(int64_t)EFAULT);
+        if (!user_range_ok(argp_user, 60)) return (uint64_t)(-(int64_t)EFAULT);
+        uint8_t zero[60];
+        for (uint64_t i = 0; i < sizeof(zero); i++) zero[i] = 0;
+        if (write_bytes_to_user(argp_user, zero, sizeof(zero)) != 0) {
+            return (uint64_t)(-(int64_t)EFAULT);
+        }
+        return 0;
+    }
+
+    if (req == TIOCGWINSZ) {
+        /* struct winsize { u16 row,col,xpixel,ypixel } */
+        if (argp_user == 0) return (uint64_t)(-(int64_t)EFAULT);
+        if (!user_range_ok(argp_user, 8)) return (uint64_t)(-(int64_t)EFAULT);
+
+        uint16_t ws[4];
+        ws[0] = 24; /* rows */
+        ws[1] = 80; /* cols */
+        ws[2] = 0;
+        ws[3] = 0;
+        if (write_bytes_to_user(argp_user, ws, sizeof(ws)) != 0) {
+            return (uint64_t)(-(int64_t)EFAULT);
+        }
+        return 0;
+    }
+
+    if (req == TIOCGPGRP) {
+        if (argp_user == 0) return (uint64_t)(-(int64_t)EFAULT);
+        if (!user_range_ok(argp_user, 4)) return (uint64_t)(-(int64_t)EFAULT);
+        uint32_t pg = (uint32_t)cur->pid;
+        if (write_bytes_to_user(argp_user, &pg, sizeof(pg)) != 0) {
+            return (uint64_t)(-(int64_t)EFAULT);
+        }
+        return 0;
+    }
+
+    return (uint64_t)(-(int64_t)ENOTTY);
+}
+
 static uint64_t sys_openat(int64_t dirfd, uint64_t pathname_user, uint64_t flags, uint64_t mode) {
     (void)flags;
     (void)mode;
@@ -723,9 +963,15 @@ static uint64_t sys_openat(int64_t dirfd, uint64_t pathname_user, uint64_t flags
         return (uint64_t)(-(int64_t)ENOSYS);
     }
 
-    char path[256];
-    if (copy_cstr_from_user(path, sizeof(path), pathname_user) != 0) {
+    char in[MAX_PATH];
+    if (copy_cstr_from_user(in, sizeof(in), pathname_user) != 0) {
         return (uint64_t)(-(int64_t)EFAULT);
+    }
+
+    proc_t *cur = &g_procs[g_cur_proc];
+    char path[MAX_PATH];
+    if (resolve_path(cur, in, path, sizeof(path)) != 0) {
+        return (uint64_t)(-(int64_t)EINVAL);
     }
 
     const uint8_t *data = 0;
@@ -761,7 +1007,6 @@ static uint64_t sys_openat(int64_t dirfd, uint64_t pathname_user, uint64_t flags
         d->u.initramfs.dir_path[i] = '\0';
     }
 
-    proc_t *cur = &g_procs[g_cur_proc];
     int fd = fd_alloc_into(cur, 3, didx);
     /* fd_alloc_into() takes a ref; drop our creation ref. */
     desc_decref(didx);
@@ -1101,9 +1346,15 @@ static uint64_t sys_newfstatat(int64_t dirfd, uint64_t pathname_user, uint64_t s
         return (uint64_t)(-(int64_t)EFAULT);
     }
 
-    char path[256];
-    if (copy_cstr_from_user(path, sizeof(path), pathname_user) != 0) {
+    char in[MAX_PATH];
+    if (copy_cstr_from_user(in, sizeof(in), pathname_user) != 0) {
         return (uint64_t)(-(int64_t)EFAULT);
+    }
+
+    proc_t *cur = &g_procs[g_cur_proc];
+    char path[MAX_PATH];
+    if (resolve_path(cur, in, path, sizeof(path)) != 0) {
+        return (uint64_t)(-(int64_t)EINVAL);
     }
 
     const uint8_t *data = 0;
@@ -1277,9 +1528,15 @@ static uint64_t sys_execve(trap_frame_t *tf, uint64_t pathname_user, uint64_t ar
         }
     }
 
-    char path[256];
-    if (copy_cstr_from_user(path, sizeof(path), pathname_user) != 0) {
+    char in[MAX_PATH];
+    if (copy_cstr_from_user(in, sizeof(in), pathname_user) != 0) {
         return (uint64_t)(-(int64_t)EFAULT);
+    }
+
+    proc_t *cur = &g_procs[g_cur_proc];
+    char path[MAX_PATH];
+    if (resolve_path(cur, in, path, sizeof(path)) != 0) {
+        return (uint64_t)(-(int64_t)EINVAL);
     }
 
     /* If argv is missing, provide a sensible argv[0] for compatibility. */
@@ -1621,6 +1878,17 @@ static uint64_t sys_clone(trap_frame_t *tf, uint64_t flags, uint64_t child_stack
         }
     }
 
+    /* Inherit cwd. */
+    for (uint64_t i = 0; i < MAX_PATH; i++) {
+        g_procs[slot].cwd[i] = parent->cwd[i];
+        if (parent->cwd[i] == '\0') {
+            break;
+        }
+        if (i == MAX_PATH - 1) {
+            g_procs[slot].cwd[i] = '\0';
+        }
+    }
+
     /* In the child, clone returns 0. */
     g_procs[slot].tf.x[0] = 0;
 
@@ -1800,6 +2068,14 @@ uint64_t exception_handle(trap_frame_t *tf,
     int update_saved_elr = 1;
 
     switch (nr) {
+        case __NR_getcwd:
+            ret = sys_getcwd(a0, a1);
+            break;
+
+        case __NR_ioctl:
+            ret = sys_ioctl(a0, a1, a2);
+            break;
+
         case __NR_brk:
             ret = sys_brk(a0);
             break;
@@ -1826,6 +2102,14 @@ uint64_t exception_handle(trap_frame_t *tf,
 
         case __NR_clock_gettime:
             ret = sys_clock_gettime(a0, a1);
+            break;
+
+        case __NR_nanosleep:
+            ret = sys_nanosleep(a0, a1);
+            break;
+
+        case __NR_chdir:
+            ret = sys_chdir(a0);
             break;
 
         case __NR_dup3:

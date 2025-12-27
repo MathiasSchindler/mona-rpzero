@@ -330,8 +330,11 @@ Acceptance:
 Notes:
 
 - Implemented: `getpid/getppid`, `uname`, `clock_gettime` (currently returns zero time for realtime/monotonic), `brk`.
-- Implemented (minimal): anonymous `mmap/munmap` (private+anonymous only, `addr=0` only, no file-backed mappings, no actual unmapping of pages yet — purely an address-space allocator to keep basic programs happy).
-- Userland smoke tests: `/bin/pid`, `/bin/uname`, `/bin/brk`, `/bin/mmap`.
+- Implemented: `getcwd`/`chdir` (per-process cwd + relative path resolution for `openat`/`newfstatat`/`execve`).
+- Implemented (minimal): anonymous `mmap/munmap` (private+anonymous only, `addr=0` only, no file-backed mappings, no real page unmapping yet — address-space allocator).
+- Implemented (minimal): `nanosleep` (returns immediately; writes {0,0} to rem when provided).
+- Implemented (minimal): `ioctl` tty subset for UART fds (`TCGETS`, `TIOCGWINSZ`, `TIOCGPGRP`).
+- Userland smoke tests: `/bin/pid`, `/bin/uname`, `/bin/brk`, `/bin/mmap`, `/bin/cwd`, `/bin/tty`, `/bin/sleep`.
 
 ### Phase 9 — Move from QEMU to real Zero 2 W
 

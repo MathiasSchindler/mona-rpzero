@@ -1,6 +1,6 @@
 #pragma once
 
-#include <stdint.h>
+#include "stdint.h"
 
 /* Implemented in src/syscall_asm.S */
 uint64_t __syscall0(uint64_t nr);
@@ -19,7 +19,10 @@ uint64_t __syscall4_uppu(uint64_t nr, uint64_t a0, const void *p1, void *p2, uin
 uint64_t __syscall4_upup(uint64_t nr, uint64_t a0, void *p1, uint64_t a2, void *p3);
 
 /* Linux AArch64 syscall numbers */
+#define __NR_getcwd    17ull
+#define __NR_ioctl     29ull
 #define __NR_dup3      24ull
+#define __NR_chdir     49ull
 #define __NR_openat    56ull
 #define __NR_close     57ull
 #define __NR_pipe2     59ull
@@ -28,6 +31,7 @@ uint64_t __syscall4_upup(uint64_t nr, uint64_t a0, void *p1, uint64_t a2, void *
 #define __NR_read      63ull
 #define __NR_write      64ull
 #define __NR_newfstatat 79ull
+#define __NR_nanosleep 101ull
 #define __NR_clock_gettime 113ull
 #define __NR_uname     160ull
 #define __NR_getpid     172ull
@@ -75,6 +79,22 @@ static inline uint64_t sys_clock_gettime(uint64_t clockid, linux_timespec_t *tp)
 
 static inline uint64_t sys_brk(void *addr) {
     return __syscall1(__NR_brk, (uint64_t)(uintptr_t)addr);
+}
+
+static inline uint64_t sys_getcwd(char *buf, uint64_t size) {
+    return __syscall2(__NR_getcwd, (uint64_t)(uintptr_t)buf, size);
+}
+
+static inline uint64_t sys_chdir(const char *path) {
+    return __syscall1(__NR_chdir, (uint64_t)(uintptr_t)path);
+}
+
+static inline uint64_t sys_nanosleep(const linux_timespec_t *req, linux_timespec_t *rem) {
+    return __syscall2(__NR_nanosleep, (uint64_t)(uintptr_t)req, (uint64_t)(uintptr_t)rem);
+}
+
+static inline uint64_t sys_ioctl(uint64_t fd, uint64_t req, void *argp) {
+    return __syscall3(__NR_ioctl, fd, req, (uint64_t)(uintptr_t)argp);
 }
 
 static inline uint64_t sys_mmap(void *addr,
