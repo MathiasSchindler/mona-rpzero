@@ -37,3 +37,15 @@ typedef struct {
 #define LINUX_DT_UNKNOWN 0
 #define LINUX_DT_DIR 4
 #define LINUX_DT_REG 8
+
+/* uname(2) uses struct utsname. */
+enum { LINUX_UTSNAME_LEN = 65 };
+
+typedef struct {
+    char sysname[LINUX_UTSNAME_LEN];
+    char nodename[LINUX_UTSNAME_LEN];
+    char release[LINUX_UTSNAME_LEN];
+    char version[LINUX_UTSNAME_LEN];
+    char machine[LINUX_UTSNAME_LEN];
+    char domainname[LINUX_UTSNAME_LEN];
+} linux_utsname_t;

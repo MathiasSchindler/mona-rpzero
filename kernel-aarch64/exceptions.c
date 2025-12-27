@@ -17,6 +17,10 @@
 #define __NR_read      63ull
 #define __NR_write      64ull
 #define __NR_newfstatat 79ull
+#define __NR_clock_gettime 113ull
+#define __NR_uname     160ull
+#define __NR_getpid     172ull
+#define __NR_getppid    173ull
 #define __NR_clone      220ull
 #define __NR_execve     221ull
 #define __NR_wait4      260ull
@@ -925,6 +929,75 @@ static uint64_t sys_newfstatat(int64_t dirfd, uint64_t pathname_user, uint64_t s
     return 0;
 }
 
+static uint64_t sys_uname(uint64_t buf_user) {
+    if (!user_range_ok(buf_user, (uint64_t)sizeof(linux_utsname_t))) {
+        return (uint64_t)(-(int64_t)EFAULT);
+    }
+
+    linux_utsname_t u;
+    /* Zero-init without libc. */
+    {
+        volatile uint8_t *zp = (volatile uint8_t *)&u;
+        for (uint64_t i = 0; i < sizeof(u); i++) zp[i] = 0;
+    }
+
+    /* Keep these short and stable; many user programs only probe for presence. */
+    const char *sysname = "Linux";
+    const char *nodename = "mona";
+    const char *release = "0.0";
+    const char *version = "mona-rpzero";
+    const char *machine = "aarch64";
+    const char *domainname = "";
+
+    const struct {
+        const char *src;
+        char *dst;
+    } fields[] = {
+        {sysname, u.sysname},
+        {nodename, u.nodename},
+        {release, u.release},
+        {version, u.version},
+        {machine, u.machine},
+        {domainname, u.domainname},
+    };
+
+    for (uint64_t f = 0; f < (uint64_t)(sizeof(fields) / sizeof(fields[0])); f++) {
+        const char *s = fields[f].src;
+        char *d = fields[f].dst;
+        uint64_t i = 0;
+        while (s[i] != '\0' && i + 1 < LINUX_UTSNAME_LEN) {
+            d[i] = s[i];
+            i++;
+        }
+        d[i] = '\0';
+    }
+
+    if (write_bytes_to_user(buf_user, &u, sizeof(u)) != 0) {
+        return (uint64_t)(-(int64_t)EFAULT);
+    }
+    return 0;
+}
+
+static uint64_t sys_clock_gettime(uint64_t clockid, uint64_t tp_user) {
+    /* Support common ids: 0=CLOCK_REALTIME, 1=CLOCK_MONOTONIC.
+     * Return a deterministic zero time for now.
+     */
+    if (clockid != 0 && clockid != 1) {
+        return (uint64_t)(-(int64_t)EINVAL);
+    }
+    if (!user_range_ok(tp_user, (uint64_t)sizeof(linux_timespec_t))) {
+        return (uint64_t)(-(int64_t)EFAULT);
+    }
+
+    linux_timespec_t ts;
+    ts.tv_sec = 0;
+    ts.tv_nsec = 0;
+    if (write_bytes_to_user(tp_user, &ts, sizeof(ts)) != 0) {
+        return (uint64_t)(-(int64_t)EFAULT);
+    }
+    return 0;
+}
+
 static inline void write_elr_el1(uint64_t v) {
     __asm__ volatile("msr ELR_EL1, %0" :: "r"(v));
 }
@@ -1515,6 +1588,22 @@ uint64_t exception_handle(trap_frame_t *tf,
     int update_saved_elr = 1;
 
     switch (nr) {
+        case __NR_getpid:
+            ret = g_procs[g_cur_proc].pid;
+            break;
+
+        case __NR_getppid:
+            ret = g_procs[g_cur_proc].ppid;
+            break;
+
+        case __NR_uname:
+            ret = sys_uname(a0);
+            break;
+
+        case __NR_clock_gettime:
+            ret = sys_clock_gettime(a0, a1);
+            break;
+
         case __NR_dup3:
             ret = sys_dup3(a0, a1, a2);
             break;

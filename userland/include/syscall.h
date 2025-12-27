@@ -27,11 +27,47 @@ uint64_t __syscall4_upup(uint64_t nr, uint64_t a0, void *p1, uint64_t a2, void *
 #define __NR_read      63ull
 #define __NR_write      64ull
 #define __NR_newfstatat 79ull
+#define __NR_clock_gettime 113ull
+#define __NR_uname     160ull
+#define __NR_getpid     172ull
+#define __NR_getppid    173ull
 #define __NR_clone      220ull
 #define __NR_execve     221ull
 #define __NR_wait4      260ull
 #define __NR_exit       93ull
 #define __NR_exit_group 94ull
+
+typedef struct {
+    int64_t tv_sec;
+    int64_t tv_nsec;
+} linux_timespec_t;
+
+enum { LINUX_UTSNAME_LEN = 65 };
+
+typedef struct {
+    char sysname[LINUX_UTSNAME_LEN];
+    char nodename[LINUX_UTSNAME_LEN];
+    char release[LINUX_UTSNAME_LEN];
+    char version[LINUX_UTSNAME_LEN];
+    char machine[LINUX_UTSNAME_LEN];
+    char domainname[LINUX_UTSNAME_LEN];
+} linux_utsname_t;
+
+static inline uint64_t sys_getpid(void) {
+    return __syscall0(__NR_getpid);
+}
+
+static inline uint64_t sys_getppid(void) {
+    return __syscall0(__NR_getppid);
+}
+
+static inline uint64_t sys_uname(linux_utsname_t *buf) {
+    return __syscall1(__NR_uname, (uint64_t)(uintptr_t)buf);
+}
+
+static inline uint64_t sys_clock_gettime(uint64_t clockid, linux_timespec_t *tp) {
+    return __syscall2(__NR_clock_gettime, clockid, (uint64_t)(uintptr_t)tp);
+}
 
 static inline uint64_t sys_openat(uint64_t dirfd, const char *pathname, uint64_t flags, uint64_t mode) {
     return __syscall4_upuu(__NR_openat, dirfd, pathname, flags, mode);

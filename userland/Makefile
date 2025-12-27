@@ -21,9 +21,10 @@ CFLAGS := -O2 -g -ffreestanding -nostdlib -nostartfiles \
 USER_BASE ?= 0x0000000000400000
 
 
+
 .PHONY: all clean check-toolchain check-nolibc initramfs
 
-all: check-nolibc $(BUILD)/echo.bin $(BUILD)/true.bin $(BUILD)/cat.bin $(BUILD)/ls.bin $(BUILD)/sh.bin $(BUILD)/init.bin
+all: check-nolibc $(BUILD)/echo.bin $(BUILD)/true.bin $(BUILD)/cat.bin $(BUILD)/ls.bin $(BUILD)/pid.bin $(BUILD)/uname.bin $(BUILD)/sh.bin $(BUILD)/init.bin
 
 initramfs: $(BUILD)/initramfs.cpio
 
@@ -71,6 +72,12 @@ $(BUILD)/cat.o: src/cat.c include/syscall.h | $(BUILD)
 $(BUILD)/ls.o: src/ls.c include/syscall.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(BUILD)/pid.o: src/pid.c include/syscall.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/uname.o: src/uname.c include/syscall.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
 $(BUILD)/init.o: src/init.c include/syscall.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -87,6 +94,12 @@ $(BUILD)/cat.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BU
 	$(LD) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
 
 $(BUILD)/ls.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/ls.o | check-toolchain
+	$(LD) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+
+$(BUILD)/pid.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/pid.o | check-toolchain
+	$(LD) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+
+$(BUILD)/uname.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/uname.o | check-toolchain
 	$(LD) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
 
 $(BUILD)/init.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/init.o | check-toolchain
@@ -107,6 +120,12 @@ $(BUILD)/cat.bin: $(BUILD)/cat.elf | check-toolchain
 $(BUILD)/ls.bin: $(BUILD)/ls.elf | check-toolchain
 	$(OBJCOPY) -O binary $< $@
 
+$(BUILD)/pid.bin: $(BUILD)/pid.elf | check-toolchain
+	$(OBJCOPY) -O binary $< $@
+
+$(BUILD)/uname.bin: $(BUILD)/uname.elf | check-toolchain
+	$(OBJCOPY) -O binary $< $@
+
 $(BUILD)/init.bin: $(BUILD)/init.elf | check-toolchain
 	$(OBJCOPY) -O binary $< $@
 
@@ -120,6 +139,8 @@ $(BUILD)/initramfs.cpio: $(TOOLS_DIR)/mkcpio_newc.py all | $(BUILD)
 	@cp "$(BUILD)/echo.elf" "$(INITRAMFS_ROOT)/bin/echo"
 	@cp "$(BUILD)/cat.elf"  "$(INITRAMFS_ROOT)/bin/cat"
 	@cp "$(BUILD)/ls.elf"   "$(INITRAMFS_ROOT)/bin/ls"
+	@cp "$(BUILD)/pid.elf"  "$(INITRAMFS_ROOT)/bin/pid"
+	@cp "$(BUILD)/uname.elf"  "$(INITRAMFS_ROOT)/bin/uname"
 	@cp "$(BUILD)/sh.elf"   "$(INITRAMFS_ROOT)/bin/sh"
 	@cp "$(BUILD)/init.elf" "$(INITRAMFS_ROOT)/init"
 	python3 $(TOOLS_DIR)/mkcpio_newc.py --root "$(INITRAMFS_ROOT)" --out $@

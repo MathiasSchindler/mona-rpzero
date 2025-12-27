@@ -311,6 +311,8 @@ Notes:
 
 ### Phase 8 — Compatibility hardening
 
+Status: IN PROGRESS (2025-12-27)
+
 Deliverables:
 
 - Fill in common “small program” syscall gaps as they arise:
@@ -324,6 +326,11 @@ Deliverables:
 Acceptance:
 
 - A curated set of static Linux AArch64 binaries runs unmodified.
+
+Notes:
+
+- Implemented: `getpid/getppid`, `uname`, `clock_gettime` (currently returns zero time for realtime/monotonic).
+- Userland smoke tests: `/bin/pid` and `/bin/uname`.
 
 ### Phase 9 — Move from QEMU to real Zero 2 W
 
