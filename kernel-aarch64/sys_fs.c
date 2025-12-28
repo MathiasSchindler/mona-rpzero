@@ -12,6 +12,15 @@
 
 #define AT_FDCWD ((int64_t)-100)
 
+/* openat(2) flags (minimal subset). */
+#define O_RDONLY 0u
+#define O_WRONLY 1u
+#define O_RDWR 2u
+#define O_ACCMODE 3u
+#define O_CREAT 0100u
+#define O_EXCL 0200u
+#define O_TRUNC 01000u
+
 uint64_t sys_getcwd(uint64_t buf_user, uint64_t size) {
     proc_t *cur = &g_procs[g_cur_proc];
     uint64_t n = cstr_len_u64(cur->cwd);
@@ -204,9 +213,6 @@ uint64_t sys_ioctl(uint64_t fd, uint64_t req, uint64_t argp_user) {
 }
 
 uint64_t sys_openat(int64_t dirfd, uint64_t pathname_user, uint64_t flags, uint64_t mode) {
-    (void)flags;
-    (void)mode;
-
     if (dirfd != AT_FDCWD) {
         return (uint64_t)(-(int64_t)ENOSYS);
     }
@@ -222,11 +228,148 @@ uint64_t sys_openat(int64_t dirfd, uint64_t pathname_user, uint64_t flags, uint6
         return (uint64_t)(-(int64_t)EINVAL);
     }
 
+    /* First: if a ramfile already exists at this path, open it. */
+    uint32_t ramfile_id = 0;
+    if (vfs_ramfile_find_abs(path, &ramfile_id) == 0) {
+        /* O_EXCL only matters with O_CREAT. */
+        if ((flags & (uint64_t)(O_CREAT | O_EXCL)) == (uint64_t)(O_CREAT | O_EXCL)) {
+            return (uint64_t)(-(int64_t)EEXIST);
+        }
+
+        if ((flags & (uint64_t)O_TRUNC) != 0) {
+            (void)vfs_ramfile_set_size(ramfile_id, 0);
+        }
+
+        int didx = desc_alloc();
+        if (didx < 0) {
+            return (uint64_t)(-(int64_t)EMFILE);
+        }
+
+        file_desc_t *d = &g_descs[didx];
+        desc_clear(d);
+        d->kind = FDESC_RAMFILE;
+        d->refs = 1;
+        d->u.ramfile.file_id = ramfile_id;
+        d->u.ramfile.off = 0;
+
+        int fd = fd_alloc_into(&cur->fdt, 3, didx);
+        desc_decref(didx);
+        if (fd < 0) {
+            return (uint64_t)(-(int64_t)EMFILE);
+        }
+        return (uint64_t)fd;
+    }
+
+    /* Second: resolve via initramfs + ramdir overlay.
+     * If it doesn't exist and O_CREAT is set, create a new ramfile entry.
+     */
+
     const uint8_t *data = 0;
     uint64_t size = 0;
     uint32_t imode = 0;
+
     if (vfs_lookup_abs(path, &data, &size, &imode) != 0) {
-        return (uint64_t)(-(int64_t)ENOENT);
+        if ((flags & (uint64_t)O_CREAT) == 0) {
+            return (uint64_t)(-(int64_t)ENOENT);
+        }
+
+        /* Create a new overlay file. Parent must exist and be a directory. */
+        if (cstr_eq_u64(path, "/")) {
+            return (uint64_t)(-(int64_t)EISDIR);
+        }
+
+        const char *p = path;
+        while (*p == '/') p++;
+        if (*p == '\0') {
+            return (uint64_t)(-(int64_t)EISDIR);
+        }
+
+        /* Parent must exist and be a directory. */
+        char parent_no_slash[MAX_PATH];
+        {
+            uint64_t n = cstr_len_u64(p);
+            if (n + 1 > sizeof(parent_no_slash)) return (uint64_t)(-(int64_t)ENAMETOOLONG);
+            for (uint64_t i = 0; i <= n; i++) parent_no_slash[i] = p[i];
+
+            /* Trim trailing slashes just in case. */
+            while (n > 0 && parent_no_slash[n - 1] == '/') {
+                parent_no_slash[n - 1] = '\0';
+                n--;
+            }
+            if (n == 0) return (uint64_t)(-(int64_t)EINVAL);
+
+            /* Find last '/'. */
+            int last = -1;
+            for (uint64_t i = 0; parent_no_slash[i] != '\0'; i++) {
+                if (parent_no_slash[i] == '/') last = (int)i;
+            }
+            if (last >= 0) {
+                parent_no_slash[last] = '\0';
+            } else {
+                parent_no_slash[0] = '\0';
+            }
+        }
+
+        char parent_abs[MAX_PATH];
+        if (parent_no_slash[0] == '\0') {
+            parent_abs[0] = '/';
+            parent_abs[1] = '\0';
+        } else {
+            uint64_t pn = cstr_len_u64(parent_no_slash);
+            if (pn + 2 > sizeof(parent_abs)) return (uint64_t)(-(int64_t)ENAMETOOLONG);
+            parent_abs[0] = '/';
+            for (uint64_t i = 0; i <= pn; i++) parent_abs[1 + i] = parent_no_slash[i];
+        }
+
+        uint32_t pmode = 0;
+        if (vfs_lookup_abs(parent_abs, 0, 0, &pmode) != 0) {
+            return (uint64_t)(-(int64_t)ENOENT);
+        }
+        if ((pmode & 0170000u) != 0040000u) {
+            return (uint64_t)(-(int64_t)ENOTDIR);
+        }
+
+        uint32_t file_mode = 0100000u | (uint32_t)(mode & 0777u);
+        int crc = vfs_ramfile_create(p, file_mode);
+        if (crc != 0) {
+            return (uint64_t)(int64_t)crc;
+        }
+
+        /* Re-open as ramfile. */
+        if (vfs_ramfile_find_abs(path, &ramfile_id) != 0) {
+            return (uint64_t)(-(int64_t)ENOENT);
+        }
+
+        int didx = desc_alloc();
+        if (didx < 0) {
+            return (uint64_t)(-(int64_t)EMFILE);
+        }
+        file_desc_t *d = &g_descs[didx];
+        desc_clear(d);
+        d->kind = FDESC_RAMFILE;
+        d->refs = 1;
+        d->u.ramfile.file_id = ramfile_id;
+        d->u.ramfile.off = 0;
+
+        int fd = fd_alloc_into(&cur->fdt, 3, didx);
+        desc_decref(didx);
+        if (fd < 0) {
+            return (uint64_t)(-(int64_t)EMFILE);
+        }
+        return (uint64_t)fd;
+    }
+
+    /* Exists: handle O_EXCL|O_CREAT. */
+    if ((flags & (uint64_t)(O_CREAT | O_EXCL)) == (uint64_t)(O_CREAT | O_EXCL)) {
+        return (uint64_t)(-(int64_t)EEXIST);
+    }
+
+    /* Initramfs is read-only: reject opens requesting write access. */
+    if ((imode & 0170000u) == 0100000u) {
+        uint64_t acc = flags & (uint64_t)O_ACCMODE;
+        if (acc == (uint64_t)O_WRONLY || acc == (uint64_t)O_RDWR) {
+            return (uint64_t)(-(int64_t)EROFS);
+        }
     }
 
     int didx = desc_alloc();
@@ -312,6 +455,31 @@ uint64_t sys_read(uint64_t fd, uint64_t buf_user, uint64_t len) {
         return (uint64_t)rc;
     }
 
+    if (d->kind == FDESC_RAMFILE) {
+        uint8_t *data = 0;
+        uint64_t size = 0;
+        uint64_t cap = 0;
+        uint32_t mode = 0;
+        if (vfs_ramfile_get(d->u.ramfile.file_id, &data, &size, &cap, &mode) != 0) {
+            return (uint64_t)(-(int64_t)EBADF);
+        }
+        (void)cap;
+        (void)mode;
+
+        if (d->u.ramfile.off >= size) return 0;
+        uint64_t remain = size - d->u.ramfile.off;
+        uint64_t n = (len < remain) ? len : remain;
+
+        volatile uint8_t *dst = (volatile uint8_t *)(uintptr_t)buf_user;
+        const uint8_t *src = data + d->u.ramfile.off;
+        for (uint64_t i = 0; i < n; i++) {
+            dst[i] = src[i];
+        }
+
+        d->u.ramfile.off += n;
+        return n;
+    }
+
     if (d->kind != FDESC_INITRAMFS) {
         return (uint64_t)(-(int64_t)EBADF);
     }
@@ -355,6 +523,41 @@ uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len) {
         int64_t rc = pipe_write(d->u.pipe.pipe_id, (const volatile uint8_t *)buf, len);
         if (rc < 0) return (uint64_t)rc;
         return (uint64_t)rc;
+    }
+
+    if (d->kind == FDESC_RAMFILE) {
+        uint64_t src_user = (uint64_t)(uintptr_t)buf;
+        if (!user_range_ok(src_user, len)) {
+            return (uint64_t)(-(int64_t)EFAULT);
+        }
+        if (len == 0) return 0;
+
+        uint8_t *data = 0;
+        uint64_t size = 0;
+        uint64_t cap = 0;
+        uint32_t mode = 0;
+        if (vfs_ramfile_get(d->u.ramfile.file_id, &data, &size, &cap, &mode) != 0) {
+            return (uint64_t)(-(int64_t)EBADF);
+        }
+        (void)mode;
+
+        if (d->u.ramfile.off >= cap) {
+            return (uint64_t)(-(int64_t)EINVAL);
+        }
+        uint64_t space = cap - d->u.ramfile.off;
+        uint64_t n = (len < space) ? len : space;
+
+        const volatile uint8_t *src = (const volatile uint8_t *)(uintptr_t)src_user;
+        uint8_t *dst = data + d->u.ramfile.off;
+        for (uint64_t i = 0; i < n; i++) {
+            dst[i] = src[i];
+        }
+
+        d->u.ramfile.off += n;
+        if (d->u.ramfile.off > size) {
+            (void)vfs_ramfile_set_size(d->u.ramfile.file_id, d->u.ramfile.off);
+        }
+        return n;
     }
 
     return (uint64_t)(-(int64_t)EBADF);
@@ -459,6 +662,40 @@ uint64_t sys_lseek(uint64_t fd, int64_t off, uint64_t whence) {
         return (uint64_t)(-(int64_t)EBADF);
     }
     file_desc_t *d = &g_descs[didx];
+    if (d->kind == FDESC_RAMFILE) {
+        uint8_t *data = 0;
+        uint64_t size = 0;
+        uint64_t cap = 0;
+        uint32_t mode = 0;
+        if (vfs_ramfile_get(d->u.ramfile.file_id, &data, &size, &cap, &mode) != 0) {
+            return (uint64_t)(-(int64_t)EBADF);
+        }
+        (void)data;
+        (void)cap;
+        (void)mode;
+
+        uint64_t newoff;
+        switch (whence) {
+            case 0: /* SEEK_SET */
+                if (off < 0) return (uint64_t)(-(int64_t)EINVAL);
+                newoff = (uint64_t)off;
+                break;
+            case 1: /* SEEK_CUR */
+                if (off < 0 && (uint64_t)(-off) > d->u.ramfile.off) return (uint64_t)(-(int64_t)EINVAL);
+                newoff = (uint64_t)((int64_t)d->u.ramfile.off + off);
+                break;
+            case 2: /* SEEK_END */
+                if (off < 0 && (uint64_t)(-off) > size) return (uint64_t)(-(int64_t)EINVAL);
+                newoff = (uint64_t)((int64_t)size + off);
+                break;
+            default:
+                return (uint64_t)(-(int64_t)EINVAL);
+        }
+        if (newoff > size) return (uint64_t)(-(int64_t)EINVAL);
+        d->u.ramfile.off = newoff;
+        return newoff;
+    }
+
     if (d->kind != FDESC_INITRAMFS || d->u.initramfs.is_dir) {
         return (uint64_t)(-(int64_t)EBADF);
     }
@@ -630,4 +867,53 @@ uint64_t sys_newfstatat(int64_t dirfd, uint64_t pathname_user, uint64_t statbuf_
     const volatile uint8_t *src = (const volatile uint8_t *)&st;
     for (uint64_t i = 0; i < sizeof(st); i++) dst[i] = src[i];
     return 0;
+}
+
+uint64_t sys_unlinkat(int64_t dirfd, uint64_t pathname_user, uint64_t flags) {
+    if (dirfd != AT_FDCWD) {
+        return (uint64_t)(-(int64_t)ENOSYS);
+    }
+    if (flags != 0) {
+        return (uint64_t)(-(int64_t)ENOSYS);
+    }
+    if (pathname_user == 0) {
+        return (uint64_t)(-(int64_t)EFAULT);
+    }
+
+    char in[MAX_PATH];
+    if (copy_cstr_from_user(in, sizeof(in), pathname_user) != 0) {
+        return (uint64_t)(-(int64_t)EFAULT);
+    }
+
+    proc_t *cur = &g_procs[g_cur_proc];
+    char abs_path[MAX_PATH];
+    if (resolve_path(cur, in, abs_path, sizeof(abs_path)) != 0) {
+        return (uint64_t)(-(int64_t)EINVAL);
+    }
+
+    if (cstr_eq_u64(abs_path, "/")) {
+        return (uint64_t)(-(int64_t)EISDIR);
+    }
+
+    const char *p = abs_path;
+    while (*p == '/') p++;
+    if (*p == '\0') {
+        return (uint64_t)(-(int64_t)EISDIR);
+    }
+
+    int rc = vfs_ramfile_unlink(p);
+    if (rc == 0) {
+        return 0;
+    }
+
+    /* If it exists but is not a ramfile, reject (read-only initramfs or directory). */
+    uint32_t mode = 0;
+    if (vfs_lookup_abs(abs_path, 0, 0, &mode) == 0) {
+        if ((mode & 0170000u) == 0040000u) {
+            return (uint64_t)(-(int64_t)EISDIR);
+        }
+        return (uint64_t)(-(int64_t)EROFS);
+    }
+
+    return (uint64_t)(-(int64_t)ENOENT);
 }

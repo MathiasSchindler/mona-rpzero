@@ -39,9 +39,10 @@ USER_BASE ?= 0x0000000000400000
 
 
 
+
 .PHONY: all clean check-toolchain check-nolibc initramfs
 
-all: check-nolibc $(BUILD)/echo.bin $(BUILD)/true.bin $(BUILD)/cat.bin $(BUILD)/ls.bin $(BUILD)/pwd.bin $(BUILD)/pid.bin $(BUILD)/uname.bin $(BUILD)/mkdir.bin $(BUILD)/seq.bin $(BUILD)/uniq.bin $(BUILD)/wc.bin $(BUILD)/brk.bin $(BUILD)/mmap.bin $(BUILD)/cwd.bin $(BUILD)/tty.bin $(BUILD)/sleep.bin $(BUILD)/compat.bin $(BUILD)/sh.bin $(BUILD)/init.bin
+all: check-nolibc $(BUILD)/echo.bin $(BUILD)/true.bin $(BUILD)/false.bin $(BUILD)/cat.bin $(BUILD)/ls.bin $(BUILD)/pwd.bin $(BUILD)/pid.bin $(BUILD)/uname.bin $(BUILD)/mkdir.bin $(BUILD)/touch.bin $(BUILD)/rm.bin $(BUILD)/seq.bin $(BUILD)/uniq.bin $(BUILD)/wc.bin $(BUILD)/brk.bin $(BUILD)/mmap.bin $(BUILD)/cwd.bin $(BUILD)/tty.bin $(BUILD)/sleep.bin $(BUILD)/compat.bin $(BUILD)/sh.bin $(BUILD)/init.bin
 
 initramfs: $(BUILD)/initramfs.cpio
 
@@ -83,6 +84,9 @@ $(BUILD)/echo.o: src/echo.c include/syscall.h | $(BUILD)
 $(BUILD)/true.o: src/true.c include/syscall.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(BUILD)/false.o: src/false.c include/syscall.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
 $(BUILD)/cat.o: src/cat.c include/syscall.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -99,6 +103,12 @@ $(BUILD)/uname.o: src/uname.c include/syscall.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/mkdir.o: src/mkdir.c include/syscall.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/touch.o: src/touch.c include/syscall.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/rm.o: src/rm.c include/syscall.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/seq.o: src/seq.c include/syscall.h | $(BUILD)
@@ -142,6 +152,10 @@ $(BUILD)/true.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(B
 	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
 	$(POSTLINK)
 
+$(BUILD)/false.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/false.o | check-toolchain
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
+
 $(BUILD)/cat.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/cat.o | check-toolchain
 	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
 	$(POSTLINK)
@@ -163,6 +177,14 @@ $(BUILD)/uname.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(
 	$(POSTLINK)
 
 $(BUILD)/mkdir.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/mkdir.o | check-toolchain
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
+
+$(BUILD)/touch.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/touch.o | check-toolchain
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
+
+$(BUILD)/rm.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/rm.o | check-toolchain
 	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
 	$(POSTLINK)
 
@@ -216,6 +238,9 @@ $(BUILD)/echo.bin: $(BUILD)/echo.elf | check-toolchain
 $(BUILD)/true.bin: $(BUILD)/true.elf | check-toolchain
 	$(OBJCOPY) -O binary $< $@
 
+$(BUILD)/false.bin: $(BUILD)/false.elf | check-toolchain
+	$(OBJCOPY) -O binary $< $@
+
 $(BUILD)/cat.bin: $(BUILD)/cat.elf | check-toolchain
 	$(OBJCOPY) -O binary $< $@
 
@@ -232,6 +257,12 @@ $(BUILD)/uname.bin: $(BUILD)/uname.elf | check-toolchain
 	$(OBJCOPY) -O binary $< $@
 
 $(BUILD)/mkdir.bin: $(BUILD)/mkdir.elf | check-toolchain
+	$(OBJCOPY) -O binary $< $@
+
+$(BUILD)/touch.bin: $(BUILD)/touch.elf | check-toolchain
+	$(OBJCOPY) -O binary $< $@
+
+$(BUILD)/rm.bin: $(BUILD)/rm.elf | check-toolchain
 	$(OBJCOPY) -O binary $< $@
 
 $(BUILD)/seq.bin: $(BUILD)/seq.elf | check-toolchain
@@ -272,12 +303,16 @@ $(BUILD)/initramfs.cpio: $(TOOLS_DIR)/mkcpio_newc.py all | $(BUILD)
 	@mkdir -p "$(INITRAMFS_ROOT)/bin"
 	@cp -a "$(INITRAMFS_DIR)"/. "$(INITRAMFS_ROOT)"/
 	@cp "$(BUILD)/echo.elf" "$(INITRAMFS_ROOT)/bin/echo"
+	@cp "$(BUILD)/true.elf" "$(INITRAMFS_ROOT)/bin/true"
+	@cp "$(BUILD)/false.elf" "$(INITRAMFS_ROOT)/bin/false"
 	@cp "$(BUILD)/cat.elf"  "$(INITRAMFS_ROOT)/bin/cat"
 	@cp "$(BUILD)/ls.elf"   "$(INITRAMFS_ROOT)/bin/ls"
 	@cp "$(BUILD)/pwd.elf"  "$(INITRAMFS_ROOT)/bin/pwd"
 	@cp "$(BUILD)/pid.elf"  "$(INITRAMFS_ROOT)/bin/pid"
 	@cp "$(BUILD)/uname.elf"  "$(INITRAMFS_ROOT)/bin/uname"
 	@cp "$(BUILD)/mkdir.elf"  "$(INITRAMFS_ROOT)/bin/mkdir"
+	@cp "$(BUILD)/touch.elf"  "$(INITRAMFS_ROOT)/bin/touch"
+	@cp "$(BUILD)/rm.elf"  "$(INITRAMFS_ROOT)/bin/rm"
 	@cp "$(BUILD)/seq.elf"  "$(INITRAMFS_ROOT)/bin/seq"
 	@cp "$(BUILD)/uniq.elf"  "$(INITRAMFS_ROOT)/bin/uniq"
 	@cp "$(BUILD)/wc.elf"  "$(INITRAMFS_ROOT)/bin/wc"

@@ -23,6 +23,9 @@ void desc_clear(file_desc_t *d) {
     d->u.initramfs.dir_path[0] = '\0';
     d->u.pipe.pipe_id = 0;
     d->u.pipe.end = 0;
+    d->u.ramfile.file_id = 0;
+    d->u.ramfile._pad = 0;
+    d->u.ramfile.off = 0;
 }
 
 void fd_init(void) {

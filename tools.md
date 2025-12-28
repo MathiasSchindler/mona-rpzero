@@ -32,7 +32,7 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | du | Planned | 0 |
 | ls | Partial | 5 |
 | readelf | Planned | 0 |
-| touch | Planned | 0 |
+| touch | Partial | 2 |
 | echo | Partial | 1 |
 | readlink | Planned | 0 |
 | tr | Planned | 0 |
@@ -42,10 +42,10 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | true | Done | 1 |
 | browse | Planned | 0 |
 | expr | Planned | 0 |
-| rm | Planned | 0 |
+| rm | Partial | 2 |
 | uname | Partial | 1 |
 | cat | Partial | 2 |
-| false | Planned | 0 |
+| false | Done | 1 |
 | rmdir | Planned | 0 |
 | uncpio | Planned | 0 |
 | chmod | Planned | 0 |

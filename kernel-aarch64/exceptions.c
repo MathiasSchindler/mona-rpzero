@@ -11,6 +11,7 @@
 #define __NR_ioctl     29ull
 #define __NR_dup3      24ull
 #define __NR_mkdirat   34ull
+#define __NR_unlinkat  35ull
 #define __NR_chdir     49ull
 #define __NR_openat    56ull
 #define __NR_close     57ull
@@ -225,6 +226,10 @@ uint64_t exception_handle(trap_frame_t *tf,
 
         case __NR_mkdirat:
             ret = sys_mkdirat((int64_t)a0, a1, a2);
+            break;
+
+        case __NR_unlinkat:
+            ret = sys_unlinkat((int64_t)a0, a1, a2);
             break;
 
         case __NR_openat:

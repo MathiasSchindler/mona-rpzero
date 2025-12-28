@@ -1,17 +1,13 @@
 #include "vfs.h"
 
+#include "errno.h"
 #include "stdint.h"
-
-/* Keep these consistent with the rest of the kernel (exceptions.c). */
-#define ENOMEM 12
-#define ENAMETOOLONG 36
-#define EEXIST 17
-#define ENOENT 2
-#define ENOTDIR 20
 
 enum {
     MAX_PATH = 256,
     MAX_RAMDIRS = 64,
+    MAX_RAMFILES = 64,
+    RAMFILE_CAP = 4096,
 };
 
 typedef struct {
@@ -21,6 +17,16 @@ typedef struct {
 } ramdir_t;
 
 static ramdir_t g_ramdirs[MAX_RAMDIRS];
+
+typedef struct {
+    uint8_t used;
+    uint32_t mode;       /* includes S_IFREG */
+    uint64_t size;
+    char path[MAX_PATH];
+    uint8_t data[RAMFILE_CAP];
+} ramfile_t;
+
+static ramfile_t g_ramfiles[MAX_RAMFILES];
 
 static uint64_t cstr_len_u64(const char *s) {
     uint64_t n = 0;
@@ -64,11 +70,36 @@ static int ramdir_alloc_slot(void) {
     return -1;
 }
 
+static int ramfile_find(const char *path_no_slash) {
+    for (int i = 0; i < (int)MAX_RAMFILES; i++) {
+        if (!g_ramfiles[i].used) continue;
+        if (cstr_eq_u64(g_ramfiles[i].path, path_no_slash)) return i;
+    }
+    return -1;
+}
+
+static int ramfile_alloc_slot(void) {
+    for (int i = 0; i < (int)MAX_RAMFILES; i++) {
+        if (!g_ramfiles[i].used) return i;
+    }
+    return -1;
+}
+
 void vfs_init(void) {
     for (uint64_t i = 0; i < (uint64_t)MAX_RAMDIRS; i++) {
         g_ramdirs[i].used = 0;
         g_ramdirs[i].mode = 0;
         g_ramdirs[i].path[0] = '\0';
+    }
+
+    for (uint64_t i = 0; i < (uint64_t)MAX_RAMFILES; i++) {
+        g_ramfiles[i].used = 0;
+        g_ramfiles[i].mode = 0;
+        g_ramfiles[i].size = 0;
+        g_ramfiles[i].path[0] = '\0';
+        for (uint64_t j = 0; j < (uint64_t)RAMFILE_CAP; j++) {
+            g_ramfiles[i].data[j] = 0;
+        }
     }
 }
 
@@ -96,6 +127,14 @@ int vfs_lookup_abs(const char *abs_path, const uint8_t **out_data, uint64_t *out
         if (out_data) *out_data = 0;
         if (out_size) *out_size = 0;
         if (out_mode) *out_mode = g_ramdirs[ridx].mode;
+        return 0;
+    }
+
+    int fidx = ramfile_find(p);
+    if (fidx >= 0) {
+        if (out_data) *out_data = (const uint8_t *)g_ramfiles[fidx].data;
+        if (out_size) *out_size = g_ramfiles[fidx].size;
+        if (out_mode) *out_mode = g_ramfiles[fidx].mode;
         return 0;
     }
 
@@ -171,14 +210,20 @@ int vfs_list_dir(const char *dir_path_no_slash, initramfs_dir_cb_t cb, void *ctx
     /* First: initramfs entries. */
     (void)initramfs_list_dir(dir_path_no_slash ? dir_path_no_slash : "", vfs_list_emit_unique, &vc);
 
-    /* Second: ramdir overlay entries. */
+    /* Second: ramdir + ramfile overlay entries. */
     const char *prefix = dir_path_no_slash ? dir_path_no_slash : "";
     uint32_t plen = cstr_len_u32(prefix);
 
-    for (int i = 0; i < (int)MAX_RAMDIRS; i++) {
-        if (!g_ramdirs[i].used) continue;
-
-        const char *rp = g_ramdirs[i].path;
+    for (int i = 0; i < (int)(MAX_RAMDIRS + MAX_RAMFILES); i++) {
+        const char *rp = 0;
+        if (i < (int)MAX_RAMDIRS) {
+            if (!g_ramdirs[i].used) continue;
+            rp = g_ramdirs[i].path;
+        } else {
+            int fi = i - (int)MAX_RAMDIRS;
+            if (!g_ramfiles[fi].used) continue;
+            rp = g_ramfiles[fi].path;
+        }
         if (!rp || rp[0] == '\0') continue;
 
         const char *child = rp;
@@ -219,7 +264,12 @@ int vfs_list_dir(const char *dir_path_no_slash, initramfs_dir_cb_t cb, void *ctx
             child_full[o] = '\0';
 
             int ei = ramdir_find(child_full);
-            if (ei >= 0) child_mode = g_ramdirs[ei].mode;
+            if (ei >= 0) {
+                child_mode = g_ramdirs[ei].mode;
+            } else {
+                int ef = ramfile_find(child_full);
+                if (ef >= 0) child_mode = g_ramfiles[ef].mode;
+            }
         }
 
         /* Copy into temporary NUL-terminated buffer for callback. */
@@ -257,5 +307,79 @@ int vfs_ramdir_create(const char *path_no_slash, uint32_t mode) {
     g_ramdirs[slot].mode = mode;
     for (uint64_t i = 0; i <= n; i++) g_ramdirs[slot].path[i] = path_no_slash[i];
 
+    return 0;
+}
+
+int vfs_ramfile_create(const char *path_no_slash, uint32_t mode) {
+    if (!path_no_slash || path_no_slash[0] == '\0') {
+        return -(int)ENOENT;
+    }
+    if (ramfile_find(path_no_slash) >= 0) {
+        return -(int)EEXIST;
+    }
+    /* Do not allow creating a file where a directory exists in overlay. */
+    if (ramdir_find(path_no_slash) >= 0) {
+        return -(int)EEXIST;
+    }
+
+    int slot = ramfile_alloc_slot();
+    if (slot < 0) {
+        return -(int)ENOMEM;
+    }
+
+    uint64_t n = cstr_len_u64(path_no_slash);
+    if (n + 1 > sizeof(g_ramfiles[slot].path)) {
+        return -(int)ENAMETOOLONG;
+    }
+
+    g_ramfiles[slot].used = 1;
+    g_ramfiles[slot].mode = mode;
+    g_ramfiles[slot].size = 0;
+    for (uint64_t i = 0; i <= n; i++) g_ramfiles[slot].path[i] = path_no_slash[i];
+    for (uint64_t i = 0; i < (uint64_t)RAMFILE_CAP; i++) g_ramfiles[slot].data[i] = 0;
+
+    return 0;
+}
+
+int vfs_ramfile_unlink(const char *path_no_slash) {
+    if (!path_no_slash || path_no_slash[0] == '\0') {
+        return -(int)ENOENT;
+    }
+    int idx = ramfile_find(path_no_slash);
+    if (idx < 0) {
+        return -(int)ENOENT;
+    }
+    g_ramfiles[idx].used = 0;
+    g_ramfiles[idx].mode = 0;
+    g_ramfiles[idx].size = 0;
+    g_ramfiles[idx].path[0] = '\0';
+    return 0;
+}
+
+int vfs_ramfile_find_abs(const char *abs_path, uint32_t *out_id) {
+    if (!abs_path) return -(int)EINVAL;
+    const char *p = strip_leading_slashes_const(abs_path);
+    if (!p || *p == '\0') return -(int)ENOENT;
+    int idx = ramfile_find(p);
+    if (idx < 0) return -(int)ENOENT;
+    if (out_id) *out_id = (uint32_t)idx;
+    return 0;
+}
+
+int vfs_ramfile_get(uint32_t id, uint8_t **out_data, uint64_t *out_size, uint64_t *out_cap, uint32_t *out_mode) {
+    if (id >= (uint32_t)MAX_RAMFILES) return -(int)EINVAL;
+    if (!g_ramfiles[id].used) return -(int)ENOENT;
+    if (out_data) *out_data = g_ramfiles[id].data;
+    if (out_size) *out_size = g_ramfiles[id].size;
+    if (out_cap) *out_cap = (uint64_t)RAMFILE_CAP;
+    if (out_mode) *out_mode = g_ramfiles[id].mode;
+    return 0;
+}
+
+int vfs_ramfile_set_size(uint32_t id, uint64_t new_size) {
+    if (id >= (uint32_t)MAX_RAMFILES) return -(int)EINVAL;
+    if (!g_ramfiles[id].used) return -(int)ENOENT;
+    if (new_size > (uint64_t)RAMFILE_CAP) return -(int)EINVAL;
+    g_ramfiles[id].size = new_size;
     return 0;
 }
