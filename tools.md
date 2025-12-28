@@ -38,7 +38,6 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | tr | Planned | 0 |
 | bpe | Planned | 0 |
 | env | Planned | 0 |
-| masto | Planned | 0 |
 | rev | Planned | 0 |
 | true | Done | 1 |
 | browse | Planned | 0 |
@@ -47,7 +46,6 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | uname | Partial | 1 |
 | cat | Partial | 2 |
 | false | Planned | 0 |
-| matrixstat | Planned | 0 |
 | rmdir | Planned | 0 |
 | uncpio | Planned | 0 |
 | chmod | Planned | 0 |
