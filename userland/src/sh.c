@@ -5,6 +5,8 @@ static int find_pipe_pos(char **av);
 static int run_command(char **av);
 static int run_pipeline(char **av, int pipe_pos);
 
+static void print_prompt(void);
+
 static int is_space(char c) {
     return c == ' ' || c == '\t' || c == '\r' || c == '\n';
 }
@@ -236,13 +238,21 @@ static int run_pipeline(char **av, int pipe_pos) {
     return st_r;
 }
 
+static void print_prompt(void) {
+    char cwd[256];
+    uint64_t rc = sys_getcwd(cwd, sizeof(cwd));
+    if ((int64_t)rc < 0) {
+        sys_puts("? > ");
+        return;
+    }
+
+    sys_puts(cwd);
+    sys_puts(" > ");
+}
+
 int main(int argc, char **argv, char **envp) {
     (void)argc;
     (void)envp;
-
-    sys_puts("mona sh (tiny)\n");
-    sys_puts("type: ls | cat /hello.txt | echo hello | echo hello | cat\n");
-    sys_puts("builtins: help exit cd shutdown poweroff\n\n");
 
     char line[256];
     char *av[16];
@@ -261,7 +271,7 @@ int main(int argc, char **argv, char **envp) {
     }
 
     for (;;) {
-        sys_puts("> ");
+        print_prompt();
         int n = read_line(line, (int)sizeof(line));
         if (n == -2) {
             sys_puts("\n");
@@ -289,9 +299,7 @@ int main(int argc, char **argv, char **envp) {
         }
 
         if (streq(av[0], "help")) {
-            sys_puts("programs: ls cat echo true\n");
-            sys_puts("builtins: cd [dir] (defaults to /)\n");
-            sys_puts("builtins: shutdown/poweroff (exit QEMU)\n");
+            sys_puts("builtins: help exit cd shutdown poweroff\n");
             sys_puts("pipeline: cmd1 | cmd2 (single pipe)\n");
             continue;
         }
