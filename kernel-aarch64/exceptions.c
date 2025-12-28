@@ -7,6 +7,7 @@
 #include "elf64.h"
 #include "cache.h"
 #include "vfs.h"
+#include "pipe.h"
 
 /* Linux AArch64 syscall numbers we care about first. */
 #define __NR_getcwd    17ull
@@ -126,8 +127,6 @@ enum {
     MAX_PROCS = 16,
     MAX_FDS = 32,
     MAX_FILEDESCS = 64,
-    MAX_PIPES = 16,
-    PIPE_BUF = 1024,
     MAX_VMAS = 32,
     MAX_PATH = 256,
 };
@@ -145,20 +144,6 @@ typedef enum {
     FDESC_PIPE = 3,
 } fdesc_kind_t;
 
-typedef enum {
-    PIPE_END_READ = 0,
-    PIPE_END_WRITE = 1,
-} pipe_end_t;
-
-typedef struct {
-    uint8_t used;
-    uint8_t buf[PIPE_BUF];
-    uint32_t rpos;
-    uint32_t wpos;
-    uint32_t count;
-    uint32_t read_refs;
-    uint32_t write_refs;
-} pipe_t;
 
 typedef struct {
     uint32_t kind;
@@ -214,7 +199,6 @@ typedef struct {
     fd_table_t fdt;
 } proc_t;
 
-static pipe_t g_pipes[MAX_PIPES];
 static file_desc_t g_descs[MAX_FILEDESCS];
 static proc_t g_procs[MAX_PROCS];
 static int g_cur_proc = 0;
@@ -591,11 +575,7 @@ static void desc_incref(int didx) {
     if (d->refs == 0) return;
     d->refs++;
     if (d->kind == FDESC_PIPE) {
-        uint32_t pid = d->u.pipe.pipe_id;
-        if (pid < MAX_PIPES && g_pipes[pid].used) {
-            if (d->u.pipe.end == PIPE_END_READ) g_pipes[pid].read_refs++;
-            else g_pipes[pid].write_refs++;
-        }
+        pipe_on_desc_incref(d->u.pipe.pipe_id, d->u.pipe.end);
     }
 }
 
@@ -605,18 +585,7 @@ static void desc_decref(int didx) {
     if (d->refs == 0) return;
 
     if (d->kind == FDESC_PIPE) {
-        uint32_t pid = d->u.pipe.pipe_id;
-        if (pid < MAX_PIPES && g_pipes[pid].used) {
-            if (d->u.pipe.end == PIPE_END_READ) {
-                if (g_pipes[pid].read_refs > 0) g_pipes[pid].read_refs--;
-            } else {
-                if (g_pipes[pid].write_refs > 0) g_pipes[pid].write_refs--;
-            }
-            if (g_pipes[pid].read_refs == 0 && g_pipes[pid].write_refs == 0) {
-                g_pipes[pid].used = 0;
-                g_pipes[pid].rpos = g_pipes[pid].wpos = g_pipes[pid].count = 0;
-            }
-        }
+        pipe_on_desc_decref(d->u.pipe.pipe_id, d->u.pipe.end);
     }
 
     d->refs--;
@@ -789,28 +758,9 @@ static uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len) {
     }
 
     if (d->kind == FDESC_PIPE && d->u.pipe.end == PIPE_END_WRITE) {
-        uint32_t pid = d->u.pipe.pipe_id;
-        if (pid >= MAX_PIPES || !g_pipes[pid].used) {
-            return (uint64_t)(-(int64_t)EBADF);
-        }
-        pipe_t *pp = &g_pipes[pid];
-        if (pp->read_refs == 0) {
-            return (uint64_t)(-(int64_t)EPIPE);
-        }
-        if (len == 0) return 0;
-        if (pp->count == PIPE_BUF) {
-            return (uint64_t)(-(int64_t)EAGAIN);
-        }
-
-        uint64_t space = (uint64_t)(PIPE_BUF - pp->count);
-        uint64_t n = (len < space) ? len : space;
-        const volatile uint8_t *src = (const volatile uint8_t *)buf;
-        for (uint64_t i = 0; i < n; i++) {
-            pp->buf[pp->wpos] = src[i];
-            pp->wpos = (pp->wpos + 1u) % PIPE_BUF;
-        }
-        pp->count += (uint32_t)n;
-        return n;
+        int64_t rc = pipe_write(d->u.pipe.pipe_id, (const volatile uint8_t *)buf, len);
+        if (rc < 0) return (uint64_t)rc;
+        return (uint64_t)rc;
     }
 
     return (uint64_t)(-(int64_t)EBADF);
@@ -819,11 +769,7 @@ static uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len) {
 static void proc_init_if_needed(uint64_t elr, trap_frame_t *tf) {
     if (g_proc_inited) return;
 
-    for (uint64_t i = 0; i < MAX_PIPES; i++) {
-        g_pipes[i].used = 0;
-        g_pipes[i].rpos = g_pipes[i].wpos = g_pipes[i].count = 0;
-        g_pipes[i].read_refs = g_pipes[i].write_refs = 0;
-    }
+    pipe_init();
     for (uint64_t i = 0; i < MAX_FILEDESCS; i++) {
         desc_clear(&g_descs[i]);
     }
@@ -1309,26 +1255,9 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_user, uint64_t len) {
     }
 
     if (d->kind == FDESC_PIPE && d->u.pipe.end == PIPE_END_READ) {
-        uint32_t pid = d->u.pipe.pipe_id;
-        if (pid >= MAX_PIPES || !g_pipes[pid].used) {
-            return (uint64_t)(-(int64_t)EBADF);
-        }
-        pipe_t *pp = &g_pipes[pid];
-        if (pp->count == 0) {
-            if (pp->write_refs == 0) {
-                return 0; /* EOF */
-            }
-            return (uint64_t)(-(int64_t)EAGAIN);
-        }
-
-        uint64_t n = (len < pp->count) ? len : (uint64_t)pp->count;
-        volatile uint8_t *dst = (volatile uint8_t *)(uintptr_t)buf_user;
-        for (uint64_t i = 0; i < n; i++) {
-            dst[i] = pp->buf[pp->rpos];
-            pp->rpos = (pp->rpos + 1u) % PIPE_BUF;
-        }
-        pp->count -= (uint32_t)n;
-        return n;
+        int64_t rc = pipe_read(d->u.pipe.pipe_id, (volatile uint8_t *)(uintptr_t)buf_user, len);
+        if (rc < 0) return (uint64_t)rc;
+        return (uint64_t)rc;
     }
 
     if (d->kind != FDESC_INITRAMFS) {
@@ -1514,30 +1443,20 @@ static uint64_t sys_pipe2(uint64_t pipefd_user, uint64_t flags) {
         return (uint64_t)(-(int64_t)EFAULT);
     }
 
-    int pid = -1;
-    for (int i = 0; i < (int)MAX_PIPES; i++) {
-        if (!g_pipes[i].used) {
-            pid = i;
-            break;
-        }
-    }
-    if (pid < 0) {
+    uint32_t pid_u32 = 0;
+    int prc = pipe_create(&pid_u32);
+    if (prc != 0) {
+        /* Keep behavior: report as EMFILE when we cannot allocate a pipe slot. */
         return (uint64_t)(-(int64_t)EMFILE);
     }
-
-    g_pipes[pid].used = 1;
-    g_pipes[pid].rpos = 0;
-    g_pipes[pid].wpos = 0;
-    g_pipes[pid].count = 0;
-    g_pipes[pid].read_refs = 0;
-    g_pipes[pid].write_refs = 0;
+    uint32_t pid = pid_u32;
 
     int rdesc = desc_alloc();
     int wdesc = desc_alloc();
     if (rdesc < 0 || wdesc < 0) {
         if (rdesc >= 0) desc_clear(&g_descs[rdesc]);
         if (wdesc >= 0) desc_clear(&g_descs[wdesc]);
-        g_pipes[pid].used = 0;
+        pipe_abort(pid);
         return (uint64_t)(-(int64_t)EMFILE);
     }
 
@@ -1546,16 +1465,14 @@ static uint64_t sys_pipe2(uint64_t pipefd_user, uint64_t flags) {
     g_descs[rdesc].refs = 1;
     g_descs[rdesc].u.pipe.pipe_id = (uint32_t)pid;
     g_descs[rdesc].u.pipe.end = PIPE_END_READ;
+    pipe_on_desc_incref((uint32_t)pid, PIPE_END_READ);
 
     desc_clear(&g_descs[wdesc]);
     g_descs[wdesc].kind = FDESC_PIPE;
     g_descs[wdesc].refs = 1;
     g_descs[wdesc].u.pipe.pipe_id = (uint32_t)pid;
     g_descs[wdesc].u.pipe.end = PIPE_END_WRITE;
-
-    /* Initial references for the two pipe ends. Further dup/fork will adjust via desc_{inc,dec}ref(). */
-    g_pipes[pid].read_refs = 1;
-    g_pipes[pid].write_refs = 1;
+    pipe_on_desc_incref((uint32_t)pid, PIPE_END_WRITE);
 
     /* Install into current process FD table. */
     proc_t *cur = &g_procs[g_cur_proc];
@@ -1568,7 +1485,7 @@ static uint64_t sys_pipe2(uint64_t pipefd_user, uint64_t flags) {
     if (rfd < 0 || wfd < 0) {
         if (rfd >= 0) fd_close(cur, (uint64_t)rfd);
         if (wfd >= 0) fd_close(cur, (uint64_t)wfd);
-        g_pipes[pid].used = 0;
+        pipe_abort((uint32_t)pid);
         return (uint64_t)(-(int64_t)EMFILE);
     }
 
