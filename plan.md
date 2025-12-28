@@ -334,7 +334,12 @@ Notes:
 - Implemented (minimal): anonymous `mmap/munmap` (private+anonymous only, `addr=0` only, no file-backed mappings, no real page unmapping yet — address-space allocator).
 - Implemented (minimal): `nanosleep` (returns immediately; writes {0,0} to rem when provided).
 - Implemented (minimal): `ioctl` tty subset for UART fds (`TCGETS`, `TIOCGWINSZ`, `TIOCGPGRP`).
+- Implemented (minimal): `getuid/geteuid/getgid/getegid/gettid` (all IDs are 0; tid==pid).
+- Implemented (minimal): `set_tid_address` (stores clear_child_tid; best-effort clears it on exit).
+- Implemented (minimal): `set_robust_list`, `rt_sigaction`, `rt_sigprocmask` (stubs to keep simple static runtimes happy).
+- Implemented (minimal): `getrandom` (xorshift-based bytes, not cryptographically secure).
 - Userland smoke tests: `/bin/pid`, `/bin/uname`, `/bin/brk`, `/bin/mmap`, `/bin/cwd`, `/bin/tty`, `/bin/sleep`.
+- Userland smoke tests: `/bin/compat`.
 
 ### Phase 9 — Move from QEMU to real Zero 2 W
 

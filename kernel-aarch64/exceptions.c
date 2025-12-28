@@ -21,16 +21,27 @@
 #define __NR_write      64ull
 #define __NR_newfstatat 79ull
 #define __NR_nanosleep 101ull
+#define __NR_set_tid_address 96ull
+#define __NR_set_robust_list 99ull
 #define __NR_clock_gettime 113ull
+#define __NR_rt_sigaction 134ull
+#define __NR_rt_sigprocmask 135ull
 #define __NR_uname     160ull
 #define __NR_getpid     172ull
 #define __NR_getppid    173ull
+#define __NR_getuid     174ull
+#define __NR_geteuid    175ull
+#define __NR_getgid     176ull
+#define __NR_getegid    177ull
+#define __NR_gettid     178ull
 #define __NR_brk        214ull
 #define __NR_munmap     215ull
 #define __NR_clone      220ull
 #define __NR_execve     221ull
 #define __NR_mmap       222ull
 #define __NR_wait4      260ull
+#define __NR_prlimit64  261ull
+#define __NR_getrandom  278ull
 #define __NR_exit       93ull
 #define __NR_exit_group 94ull
 
@@ -141,6 +152,7 @@ typedef struct {
     trap_frame_t tf;
     uint64_t elr;
     uint64_t exit_code;
+    uint64_t clear_child_tid_user;
     int64_t wait_target_pid;
     uint64_t wait_status_user;
     fd_table_t fdt;
@@ -174,6 +186,7 @@ static void proc_trace(const char *msg, uint64_t a, uint64_t b) {
 
 static inline void write_elr_el1(uint64_t v);
 static inline void write_sp_el0(uint64_t v);
+static int user_range_ok(uint64_t user_ptr, uint64_t len);
 
 static void tf_copy(trap_frame_t *dst, const trap_frame_t *src) {
     for (uint64_t i = 0; i < 31; i++) {
@@ -209,11 +222,86 @@ static void proc_clear(proc_t *p) {
     tf_zero(&p->tf);
     p->elr = 0;
     p->exit_code = 0;
+    p->clear_child_tid_user = 0;
     p->wait_target_pid = 0;
     p->wait_status_user = 0;
     for (uint64_t i = 0; i < MAX_FDS; i++) {
         p->fdt.fd_to_desc[i] = -1;
     }
+}
+
+static uint64_t sys_getuid(void) { return 0; }
+static uint64_t sys_geteuid(void) { return 0; }
+static uint64_t sys_getgid(void) { return 0; }
+static uint64_t sys_getegid(void) { return 0; }
+static uint64_t sys_gettid(void) { return g_procs[g_cur_proc].pid; }
+
+static uint64_t sys_set_tid_address(uint64_t tidptr_user) {
+    proc_t *cur = &g_procs[g_cur_proc];
+    if (tidptr_user != 0) {
+        if (!user_range_ok(tidptr_user, 4)) return (uint64_t)(-(int64_t)EFAULT);
+        cur->clear_child_tid_user = tidptr_user;
+    } else {
+        cur->clear_child_tid_user = 0;
+    }
+    return cur->pid;
+}
+
+static uint64_t sys_set_robust_list(uint64_t head_user, uint64_t len) {
+    (void)head_user;
+    (void)len;
+    return 0;
+}
+
+static uint64_t g_rand_state = 0x9e3779b97f4a7c15ull;
+
+static uint64_t sys_getrandom(uint64_t buf_user, uint64_t len, uint64_t flags) {
+    (void)flags;
+    if (len == 0) return 0;
+    if (!user_range_ok(buf_user, len)) return (uint64_t)(-(int64_t)EFAULT);
+
+    volatile uint8_t *dst = (volatile uint8_t *)(uintptr_t)buf_user;
+    uint64_t s = g_rand_state ^ (g_procs[g_cur_proc].pid << 1);
+    for (uint64_t i = 0; i < len; i++) {
+        /* xorshift64* */
+        s ^= s >> 12;
+        s ^= s << 25;
+        s ^= s >> 27;
+        uint64_t x = s * 2685821657736338717ull;
+        dst[i] = (uint8_t)(x & 0xffu);
+    }
+    g_rand_state = s;
+    return len;
+}
+
+static uint64_t sys_rt_sigprocmask(uint64_t how, uint64_t set_user, uint64_t oldset_user, uint64_t sigsetsize) {
+    (void)how;
+    (void)set_user;
+    if (sigsetsize == 0 || sigsetsize > 128) return (uint64_t)(-(int64_t)EINVAL);
+    if (oldset_user != 0) {
+        if (!user_range_ok(oldset_user, sigsetsize)) return (uint64_t)(-(int64_t)EFAULT);
+        /* Report empty mask. */
+        for (uint64_t i = 0; i < sigsetsize; i++) {
+            *(volatile uint8_t *)(uintptr_t)(oldset_user + i) = 0;
+        }
+    }
+    return 0;
+}
+
+static uint64_t sys_rt_sigaction(uint64_t sig, uint64_t act_user, uint64_t oldact_user, uint64_t sigsetsize) {
+    (void)sig;
+    (void)act_user;
+    if (sigsetsize == 0 || sigsetsize > 128) return (uint64_t)(-(int64_t)EINVAL);
+
+    /* Best-effort: if oldact is requested, return a zeroed structure. */
+    if (oldact_user != 0) {
+        uint64_t need = 24u + sigsetsize; /* handler + flags + restorer + mask */
+        if (!user_range_ok(oldact_user, need)) return (uint64_t)(-(int64_t)EFAULT);
+        for (uint64_t i = 0; i < need; i++) {
+            *(volatile uint8_t *)(uintptr_t)(oldact_user + i) = 0;
+        }
+    }
+    return 0;
 }
 
 static uint64_t cstr_len_u64(const char *s) {
@@ -1984,6 +2072,12 @@ static int handle_exit_and_maybe_switch(trap_frame_t *tf, uint64_t code) {
     int cidx = g_cur_proc;
     /* Close open file descriptors (important for pipes reaching EOF). */
     proc_close_all_fds(&g_procs[cidx]);
+
+    /* Best-effort thread-lib compatibility: clear *clear_child_tid on exit. */
+    if (g_procs[cidx].clear_child_tid_user != 0 && user_range_ok(g_procs[cidx].clear_child_tid_user, 4)) {
+        *(volatile uint32_t *)(uintptr_t)g_procs[cidx].clear_child_tid_user = 0;
+    }
+
     g_procs[cidx].state = PROC_ZOMBIE;
     g_procs[cidx].exit_code = code;
     uint64_t cpid = g_procs[cidx].pid;
@@ -2096,12 +2190,48 @@ uint64_t exception_handle(trap_frame_t *tf,
             ret = g_procs[g_cur_proc].ppid;
             break;
 
+        case __NR_getuid:
+            ret = sys_getuid();
+            break;
+
+        case __NR_geteuid:
+            ret = sys_geteuid();
+            break;
+
+        case __NR_getgid:
+            ret = sys_getgid();
+            break;
+
+        case __NR_getegid:
+            ret = sys_getegid();
+            break;
+
+        case __NR_gettid:
+            ret = sys_gettid();
+            break;
+
         case __NR_uname:
             ret = sys_uname(a0);
             break;
 
         case __NR_clock_gettime:
             ret = sys_clock_gettime(a0, a1);
+            break;
+
+        case __NR_set_tid_address:
+            ret = sys_set_tid_address(a0);
+            break;
+
+        case __NR_set_robust_list:
+            ret = sys_set_robust_list(a0, a1);
+            break;
+
+        case __NR_rt_sigaction:
+            ret = sys_rt_sigaction(a0, a1, a2, a3);
+            break;
+
+        case __NR_rt_sigprocmask:
+            ret = sys_rt_sigprocmask(a0, a1, a2, a3);
             break;
 
         case __NR_nanosleep:
@@ -2146,6 +2276,15 @@ uint64_t exception_handle(trap_frame_t *tf,
 
         case __NR_newfstatat:
             ret = sys_newfstatat((int64_t)a0, a1, a2, a3);
+            break;
+
+        case __NR_prlimit64:
+            /* Not needed yet; pretend "no limit" and succeed for basic runtimes. */
+            ret = 0;
+            break;
+
+        case __NR_getrandom:
+            ret = sys_getrandom(a0, a1, a2);
             break;
 
         case __NR_execve:

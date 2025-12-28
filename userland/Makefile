@@ -24,7 +24,7 @@ USER_BASE ?= 0x0000000000400000
 
 .PHONY: all clean check-toolchain check-nolibc initramfs
 
-all: check-nolibc $(BUILD)/echo.bin $(BUILD)/true.bin $(BUILD)/cat.bin $(BUILD)/ls.bin $(BUILD)/pid.bin $(BUILD)/uname.bin $(BUILD)/brk.bin $(BUILD)/mmap.bin $(BUILD)/cwd.bin $(BUILD)/tty.bin $(BUILD)/sleep.bin $(BUILD)/sh.bin $(BUILD)/init.bin
+all: check-nolibc $(BUILD)/echo.bin $(BUILD)/true.bin $(BUILD)/cat.bin $(BUILD)/ls.bin $(BUILD)/pid.bin $(BUILD)/uname.bin $(BUILD)/brk.bin $(BUILD)/mmap.bin $(BUILD)/cwd.bin $(BUILD)/tty.bin $(BUILD)/sleep.bin $(BUILD)/compat.bin $(BUILD)/sh.bin $(BUILD)/init.bin
 
 initramfs: $(BUILD)/initramfs.cpio
 
@@ -93,6 +93,9 @@ $(BUILD)/tty.o: src/tty.c include/syscall.h | $(BUILD)
 $(BUILD)/sleep.o: src/sleep.c include/syscall.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(BUILD)/compat.o: src/compat.c include/syscall.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
 $(BUILD)/init.o: src/init.c include/syscall.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -130,6 +133,9 @@ $(BUILD)/tty.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BU
 	$(LD) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
 
 $(BUILD)/sleep.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/sleep.o | check-toolchain
+	$(LD) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+
+$(BUILD)/compat.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/compat.o | check-toolchain
 	$(LD) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
 
 $(BUILD)/init.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/init.o | check-toolchain
@@ -171,6 +177,9 @@ $(BUILD)/tty.bin: $(BUILD)/tty.elf | check-toolchain
 $(BUILD)/sleep.bin: $(BUILD)/sleep.elf | check-toolchain
 	$(OBJCOPY) -O binary $< $@
 
+$(BUILD)/compat.bin: $(BUILD)/compat.elf | check-toolchain
+	$(OBJCOPY) -O binary $< $@
+
 $(BUILD)/init.bin: $(BUILD)/init.elf | check-toolchain
 	$(OBJCOPY) -O binary $< $@
 
@@ -191,6 +200,7 @@ $(BUILD)/initramfs.cpio: $(TOOLS_DIR)/mkcpio_newc.py all | $(BUILD)
 	@cp "$(BUILD)/cwd.elf"  "$(INITRAMFS_ROOT)/bin/cwd"
 	@cp "$(BUILD)/tty.elf"  "$(INITRAMFS_ROOT)/bin/tty"
 	@cp "$(BUILD)/sleep.elf"  "$(INITRAMFS_ROOT)/bin/sleep"
+	@cp "$(BUILD)/compat.elf"  "$(INITRAMFS_ROOT)/bin/compat"
 	@cp "$(BUILD)/sh.elf"   "$(INITRAMFS_ROOT)/bin/sh"
 	@cp "$(BUILD)/init.elf" "$(INITRAMFS_ROOT)/init"
 	python3 $(TOOLS_DIR)/mkcpio_newc.py --root "$(INITRAMFS_ROOT)" --out $@

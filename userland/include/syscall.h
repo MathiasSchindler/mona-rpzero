@@ -32,16 +32,27 @@ uint64_t __syscall4_upup(uint64_t nr, uint64_t a0, void *p1, uint64_t a2, void *
 #define __NR_write      64ull
 #define __NR_newfstatat 79ull
 #define __NR_nanosleep 101ull
+#define __NR_set_tid_address 96ull
+#define __NR_set_robust_list 99ull
 #define __NR_clock_gettime 113ull
+#define __NR_rt_sigaction 134ull
+#define __NR_rt_sigprocmask 135ull
 #define __NR_uname     160ull
 #define __NR_getpid     172ull
 #define __NR_getppid    173ull
+#define __NR_getuid     174ull
+#define __NR_geteuid    175ull
+#define __NR_getgid     176ull
+#define __NR_getegid    177ull
+#define __NR_gettid     178ull
 #define __NR_brk        214ull
 #define __NR_munmap     215ull
 #define __NR_clone      220ull
 #define __NR_execve     221ull
 #define __NR_mmap       222ull
 #define __NR_wait4      260ull
+#define __NR_prlimit64  261ull
+#define __NR_getrandom  278ull
 #define __NR_exit       93ull
 #define __NR_exit_group 94ull
 
@@ -69,6 +80,26 @@ static inline uint64_t sys_getppid(void) {
     return __syscall0(__NR_getppid);
 }
 
+static inline uint64_t sys_getuid(void) {
+    return __syscall0(__NR_getuid);
+}
+
+static inline uint64_t sys_geteuid(void) {
+    return __syscall0(__NR_geteuid);
+}
+
+static inline uint64_t sys_getgid(void) {
+    return __syscall0(__NR_getgid);
+}
+
+static inline uint64_t sys_getegid(void) {
+    return __syscall0(__NR_getegid);
+}
+
+static inline uint64_t sys_gettid(void) {
+    return __syscall0(__NR_gettid);
+}
+
 static inline uint64_t sys_uname(linux_utsname_t *buf) {
     return __syscall1(__NR_uname, (uint64_t)(uintptr_t)buf);
 }
@@ -91,6 +122,26 @@ static inline uint64_t sys_chdir(const char *path) {
 
 static inline uint64_t sys_nanosleep(const linux_timespec_t *req, linux_timespec_t *rem) {
     return __syscall2(__NR_nanosleep, (uint64_t)(uintptr_t)req, (uint64_t)(uintptr_t)rem);
+}
+
+static inline uint64_t sys_set_tid_address(uint32_t *tidptr) {
+    return __syscall1(__NR_set_tid_address, (uint64_t)(uintptr_t)tidptr);
+}
+
+static inline uint64_t sys_set_robust_list(void *head, uint64_t len) {
+    return __syscall2(__NR_set_robust_list, (uint64_t)(uintptr_t)head, len);
+}
+
+static inline uint64_t sys_rt_sigaction(uint64_t sig, const void *act, void *oldact, uint64_t sigsetsize) {
+    return __syscall4(__NR_rt_sigaction, sig, (uint64_t)(uintptr_t)act, (uint64_t)(uintptr_t)oldact, sigsetsize);
+}
+
+static inline uint64_t sys_rt_sigprocmask(uint64_t how, const void *set, void *oldset, uint64_t sigsetsize) {
+    return __syscall4(__NR_rt_sigprocmask, how, (uint64_t)(uintptr_t)set, (uint64_t)(uintptr_t)oldset, sigsetsize);
+}
+
+static inline uint64_t sys_getrandom(void *buf, uint64_t len, uint64_t flags) {
+    return __syscall3(__NR_getrandom, (uint64_t)(uintptr_t)buf, len, flags);
 }
 
 static inline uint64_t sys_ioctl(uint64_t fd, uint64_t req, void *argp) {
