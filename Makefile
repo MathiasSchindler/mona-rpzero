@@ -57,6 +57,9 @@ run-aarch64: aarch64-kernel
 		echo "Tried: $(DTB_CANDIDATES)" >&2; \
 		exit 2; \
 	fi
+	@# Enable semihosting-powered `poweroff` for QEMU runs.
+	@$(MAKE) -C "$(AARCH64_DIR)" CROSS="$(AARCH64_CROSS)" clean
+	@$(MAKE) -C "$(AARCH64_DIR)" CROSS="$(AARCH64_CROSS)" USERPROG="$(USERPROG)" KERNEL_DEFS="-DQEMU_SEMIHOSTING" all
 	@bash tools/run-qemu-raspi3b.sh \
 		--kernel "$(AARCH64_IMG)" \
 		--dtb "$(DTB)" \

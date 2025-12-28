@@ -16,6 +16,10 @@ CFLAGS := -O2 -g -ffreestanding -nostdlib -nostartfiles \
 	-mgeneral-regs-only -mstrict-align \
 	-Iinclude -Wall -Wextra -Wno-unused-parameter
 
+# Optional extra defines/flags (e.g. -DQEMU_SEMIHOSTING)
+KERNEL_DEFS ?=
+CFLAGS += $(KERNEL_DEFS)
+
 TEST_FAULT ?= 0
 CFLAGS += -DTEST_FAULT=$(TEST_FAULT)
 

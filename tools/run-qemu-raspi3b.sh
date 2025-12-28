@@ -54,6 +54,7 @@ cmd=(
   -cpu cortex-a53
   -m "$MEM"
   -nographic
+  -semihosting
   -kernel "$KERNEL"
   -dtb "$DTB"
 )

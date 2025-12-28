@@ -29,7 +29,7 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | awk | Planned | 0 |
 | dns6 | Planned | 0 |
 | ln | Planned | 0 |
-| pwd | Planned | 0 |
+| pwd | Partial | 1 |
 | tls13 | Planned | 0 |
 | basename | Planned | 0 |
 | du | Planned | 0 |

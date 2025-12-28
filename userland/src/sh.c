@@ -1,5 +1,10 @@
 #include "syscall.h"
 
+static int tokenize(char *buf, char **argv, int max_argv);
+static int find_pipe_pos(char **av);
+static int run_command(char **av);
+static int run_pipeline(char **av, int pipe_pos);
+
 static int is_space(char c) {
     return c == ' ' || c == '\t' || c == '\r' || c == '\n';
 }
@@ -19,7 +24,7 @@ static int read_line(char *buf, int cap) {
         char c = 0;
         long rc = (long)sys_read(0, &c, 1);
         if (rc < 0) return -1;
-        if (rc == 0) continue;
+        if (rc == 0) return -2;
 
         if (c == '\r') c = '\n';
 
@@ -44,6 +49,35 @@ static int read_line(char *buf, int cap) {
 
     buf[n] = '\0';
     return n;
+}
+
+static int run_script(char *cmd, char **av, int av_cap) {
+    int last_status = 0;
+
+    char *p = cmd;
+    for (;;) {
+        while (*p && is_space(*p)) p++;
+        if (!*p) break;
+
+        char *seg = p;
+        while (*p && *p != ';') p++;
+        if (*p == ';') {
+            *p = '\0';
+            p++;
+        }
+
+        int ac = tokenize(seg, av, av_cap);
+        if (ac == 0) continue;
+
+        int pp = find_pipe_pos(av);
+        if (pp >= 0) {
+            last_status = run_pipeline(av, pp);
+        } else {
+            last_status = run_command(av);
+        }
+    }
+
+    return last_status;
 }
 
 static int tokenize(char *buf, char **argv, int max_argv) {
@@ -108,6 +142,16 @@ static int find_pipe_pos(char **av) {
 
 static int run_command(char **av) {
     if (!av || !av[0]) return -1;
+
+    if (streq(av[0], "cd")) {
+        const char *path = av[1] ? av[1] : "/";
+        long rc = (long)sys_chdir(path);
+        if (rc < 0) {
+            sys_puts("cd failed\n");
+            return -1;
+        }
+        return 0;
+    }
 
     long pid = (long)sys_fork();
     if (pid < 0) {
@@ -198,7 +242,7 @@ int main(int argc, char **argv, char **envp) {
 
     sys_puts("mona sh (tiny)\n");
     sys_puts("type: ls | cat /hello.txt | echo hello | echo hello | cat\n");
-    sys_puts("builtins: help exit\n\n");
+    sys_puts("builtins: help exit cd shutdown poweroff\n\n");
 
     char line[256];
     char *av[16];
@@ -213,19 +257,16 @@ int main(int argc, char **argv, char **envp) {
         }
         cmd[i] = '\0';
 
-        int ac = tokenize(cmd, av, (int)(sizeof(av) / sizeof(av[0])));
-        if (ac == 0) return 0;
-
-        int pp = find_pipe_pos(av);
-        if (pp >= 0) {
-            return run_pipeline(av, pp);
-        }
-        return run_command(av);
+        return run_script(cmd, av, (int)(sizeof(av) / sizeof(av[0])));
     }
 
     for (;;) {
         sys_puts("> ");
         int n = read_line(line, (int)sizeof(line));
+        if (n == -2) {
+            sys_puts("\n");
+            sys_exit_group(0);
+        }
         if (n < 0) {
             sys_puts("read error\n");
             continue;
@@ -238,8 +279,19 @@ int main(int argc, char **argv, char **envp) {
             sys_exit_group(0);
         }
 
+        if (streq(av[0], "shutdown") || streq(av[0], "poweroff")) {
+            const uint64_t LINUX_REBOOT_MAGIC1 = 0xfee1deadull;
+            const uint64_t LINUX_REBOOT_MAGIC2 = 0x28121969ull;
+            const uint64_t LINUX_REBOOT_CMD_POWER_OFF = 0x4321fedcull;
+            uint64_t rc = sys_reboot(LINUX_REBOOT_MAGIC1, LINUX_REBOOT_MAGIC2, LINUX_REBOOT_CMD_POWER_OFF, 0);
+            (void)rc;
+            sys_exit_group(0);
+        }
+
         if (streq(av[0], "help")) {
             sys_puts("programs: ls cat echo true\n");
+            sys_puts("builtins: cd [dir] (defaults to /)\n");
+            sys_puts("builtins: shutdown/poweroff (exit QEMU)\n");
             sys_puts("pipeline: cmd1 | cmd2 (single pipe)\n");
             continue;
         }

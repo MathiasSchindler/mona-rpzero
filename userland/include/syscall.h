@@ -37,6 +37,7 @@ uint64_t __syscall4_upup(uint64_t nr, uint64_t a0, void *p1, uint64_t a2, void *
 #define __NR_clock_gettime 113ull
 #define __NR_rt_sigaction 134ull
 #define __NR_rt_sigprocmask 135ull
+#define __NR_reboot    142ull
 #define __NR_uname     160ull
 #define __NR_getpid     172ull
 #define __NR_getppid    173ull
@@ -142,6 +143,10 @@ static inline uint64_t sys_rt_sigprocmask(uint64_t how, const void *set, void *o
 
 static inline uint64_t sys_getrandom(void *buf, uint64_t len, uint64_t flags) {
     return __syscall3(__NR_getrandom, (uint64_t)(uintptr_t)buf, len, flags);
+}
+
+static inline uint64_t sys_reboot(uint64_t magic1, uint64_t magic2, uint64_t cmd, void *arg) {
+    return __syscall4(__NR_reboot, magic1, magic2, cmd, (uint64_t)(uintptr_t)arg);
 }
 
 static inline uint64_t sys_ioctl(uint64_t fd, uint64_t req, void *argp) {
