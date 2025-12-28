@@ -31,6 +31,11 @@ OBJS := \
 	$(BUILD)/arch/enter_el0.o \
 	$(BUILD)/main.o \
 	$(BUILD)/exceptions.o \
+	$(BUILD)/power.o \
+	$(BUILD)/sys_util.o \
+	$(BUILD)/sys_misc.o \
+	$(BUILD)/sys_fs.o \
+	$(BUILD)/sys_proc.o \
 	$(BUILD)/proc.o \
 	$(BUILD)/sched.o \
 	$(BUILD)/vfs.o \
@@ -92,7 +97,23 @@ $(BUILD)/cpio_newc.o: cpio_newc.c include/cpio_newc.h | $(BUILD)
 $(BUILD)/initramfs.o: initramfs.c include/initramfs.h include/cpio_newc.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/exceptions.o: exceptions.c include/uart_pl011.h include/exceptions.h include/initramfs.h include/mmu.h include/linux_abi.h include/elf64.h include/cache.h include/vfs.h include/pipe.h include/fd.h include/proc.h include/sched.h include/regs.h | $(BUILD)
+
+$(BUILD)/exceptions.o: exceptions.c include/exceptions.h include/errno.h include/syscalls.h include/proc.h include/sched.h include/uart_pl011.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/power.o: power.c include/power.h include/errno.h include/uart_pl011.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/sys_util.o: sys_util.c include/sys_util.h include/proc.h include/mmu.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/sys_misc.o: sys_misc.c include/syscalls.h include/sys_util.h include/errno.h include/linux_abi.h include/power.h include/proc.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/sys_fs.o: sys_fs.c include/syscalls.h include/sys_util.h include/errno.h include/linux_abi.h include/fd.h include/pipe.h include/vfs.h include/initramfs.h include/proc.h include/uart_pl011.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/sys_proc.o: sys_proc.c include/syscalls.h include/sys_util.h include/errno.h include/linux_abi.h include/proc.h include/regs.h include/sched.h include/mmu.h include/pmm.h include/elf64.h include/cache.h include/initramfs.h include/power.h include/uart_pl011.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/proc.o: proc.c include/proc.h include/fd.h include/pipe.h include/vfs.h include/mmu.h | $(BUILD)

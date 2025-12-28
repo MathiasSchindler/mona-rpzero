@@ -1,17 +1,10 @@
-#include "uart_pl011.h"
 #include "exceptions.h"
-#include "initramfs.h"
-#include "mmu.h"
-#include "pmm.h"
-#include "linux_abi.h"
-#include "elf64.h"
-#include "cache.h"
-#include "vfs.h"
-#include "pipe.h"
-#include "fd.h"
+
+#include "errno.h"
 #include "proc.h"
 #include "sched.h"
-#include "regs.h"
+#include "syscalls.h"
+#include "uart_pl011.h"
 
 /* Linux AArch64 syscall numbers we care about first. */
 #define __NR_getcwd    17ull
@@ -52,6 +45,11 @@
 #define __NR_exit       93ull
 #define __NR_exit_group 94ull
 #define __NR_reboot     142ull
+
+/* Legacy monolith implementation (now split into sys_*.c/proc.c/etc).
+ * Kept temporarily to make the refactor easy to audit; will be deleted once stable.
+ */
+#if 0
 
 /* PSCI 0.2+ system off (SMC) */
 #define PSCI_FN_SYSTEM_OFF 0x84000008ull
@@ -1915,6 +1913,66 @@ static int handle_exit_and_maybe_switch(trap_frame_t *tf, uint64_t code) {
     uart_write_hex_u64(code);
     uart_write("\n");
     return 0;
+}
+
+#endif /* legacy monolith */
+
+#define PROC_TRACE 0
+
+static void proc_trace(const char *msg, uint64_t a, uint64_t b) {
+#if PROC_TRACE
+    uart_write("[proc] ");
+    uart_write(msg);
+    uart_write(" a=");
+    uart_write_hex_u64(a);
+    uart_write(" b=");
+    uart_write_hex_u64(b);
+    uart_write("\n");
+#else
+    (void)msg;
+    (void)a;
+    (void)b;
+#endif
+}
+
+static const char *exc_kind_name(uint64_t kind) {
+    switch (kind) {
+        case 0: return "SYNC_EL1t";
+        case 1: return "IRQ_EL1t";
+        case 2: return "FIQ_EL1t";
+        case 3: return "SError_EL1t";
+        case 4: return "SYNC_EL1h";
+        case 5: return "IRQ_EL1h";
+        case 6: return "FIQ_EL1h";
+        case 7: return "SError_EL1h";
+        case 8: return "SYNC_EL0_64";
+        case 9: return "IRQ_EL0_64";
+        case 10: return "FIQ_EL0_64";
+        case 11: return "SError_EL0_64";
+        case 12: return "SYNC_EL0_32";
+        case 13: return "IRQ_EL0_32";
+        case 14: return "FIQ_EL0_32";
+        case 15: return "SError_EL0_32";
+        default: return "UNKNOWN";
+    }
+}
+
+void exception_report(uint64_t kind,
+                      uint64_t esr,
+                      uint64_t elr,
+                      uint64_t far,
+                      uint64_t spsr) {
+    uart_write("\n[exception] kind=");
+    uart_write(exc_kind_name(kind));
+    uart_write(" esr=");
+    uart_write_hex_u64(esr);
+    uart_write(" elr=");
+    uart_write_hex_u64(elr);
+    uart_write(" far=");
+    uart_write_hex_u64(far);
+    uart_write(" spsr=");
+    uart_write_hex_u64(spsr);
+    uart_write("\n");
 }
 
 uint64_t exception_handle(trap_frame_t *tf,

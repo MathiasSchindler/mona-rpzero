@@ -30,7 +30,16 @@ Known nuance discovered while validating:
 
 Remaining work (not done yet):
 
-- [ ] Step 5 — Shrink `exceptions.c` to “trap + dispatch” (optionally split syscall handlers by domain)
+- [x] Step 5 — Shrink `exceptions.c` to “trap + dispatch” (optionally split syscall handlers by domain)
+    - `kernel-aarch64/exceptions.c` now only contains `exception_report()` + `exception_handle()` (syscall dispatch) and delegates syscall bodies to modules.
+    - New modules added:
+       - `kernel-aarch64/sys_util.c` + `kernel-aarch64/include/sys_util.h` (uaccess + path helpers)
+       - `kernel-aarch64/sys_fs.c` (filesystem/FD oriented syscalls)
+       - `kernel-aarch64/sys_proc.c` (exec/clone/wait/exit, brk/mmap/munmap)
+       - `kernel-aarch64/sys_misc.c` (uname/clock_gettime/getrandom/signal stubs)
+       - `kernel-aarch64/power.c` + `kernel-aarch64/include/power.h` (poweroff + reboot)
+       - `kernel-aarch64/include/errno.h` (shared errno numbers)
+    - Note: the legacy monolithic implementation is currently still present in `exceptions.c` behind `#if 0` as an audit aid; it can be deleted once we’re fully confident.
 
 This plan below is updated to reflect that Steps 1–3 are already completed.
 

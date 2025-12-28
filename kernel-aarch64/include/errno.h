@@ -1,0 +1,21 @@
+#pragma once
+
+/* errno values (Linux) */
+#define E2BIG 7ull
+#define ENOEXEC 8ull
+#define EBADF 9ull
+#define ECHILD 10ull
+#define EAGAIN 11ull
+#define ENOMEM 12ull
+#define EFAULT 14ull
+#define EEXIST 17ull
+#define ENOTDIR 20ull
+#define EISDIR 21ull
+#define EINVAL 22ull
+#define EMFILE 24ull
+#define ENOTTY 25ull
+#define EPIPE 32ull
+#define ERANGE 34ull
+#define ENAMETOOLONG 36ull
+#define ENOENT 2ull
+#define ENOSYS 38ull
