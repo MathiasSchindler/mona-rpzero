@@ -43,6 +43,7 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | browse | Planned | 0 |
 | expr | Planned | 0 |
 | rm | Partial | 2 |
+| rmdir | Done | 1 |
 | uname | Partial | 1 |
 | cat | Partial | 2 |
 | false | Done | 1 |

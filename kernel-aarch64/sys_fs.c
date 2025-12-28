@@ -21,6 +21,9 @@
 #define O_EXCL 0200u
 #define O_TRUNC 01000u
 
+/* unlinkat(2) flags (subset). */
+#define AT_REMOVEDIR 0x200u
+
 uint64_t sys_getcwd(uint64_t buf_user, uint64_t size) {
     proc_t *cur = &g_procs[g_cur_proc];
     uint64_t n = cstr_len_u64(cur->cwd);
@@ -873,7 +876,7 @@ uint64_t sys_unlinkat(int64_t dirfd, uint64_t pathname_user, uint64_t flags) {
     if (dirfd != AT_FDCWD) {
         return (uint64_t)(-(int64_t)ENOSYS);
     }
-    if (flags != 0) {
+    if (flags != 0 && flags != (uint64_t)AT_REMOVEDIR) {
         return (uint64_t)(-(int64_t)ENOSYS);
     }
     if (pathname_user == 0) {
@@ -901,10 +904,23 @@ uint64_t sys_unlinkat(int64_t dirfd, uint64_t pathname_user, uint64_t flags) {
         return (uint64_t)(-(int64_t)EISDIR);
     }
 
-    int rc = vfs_ramfile_unlink(p);
-    if (rc == 0) {
-        return 0;
+    if (flags == (uint64_t)AT_REMOVEDIR) {
+        int drc = vfs_ramdir_remove(p);
+        if (drc == 0) return 0;
+
+        /* If it exists but is not a removable overlay dir, translate errors. */
+        uint32_t mode = 0;
+        if (vfs_lookup_abs(abs_path, 0, 0, &mode) == 0) {
+            if ((mode & 0170000u) != 0040000u) {
+                return (uint64_t)(-(int64_t)ENOTDIR);
+            }
+            return (uint64_t)(-(int64_t)EROFS);
+        }
+        return (uint64_t)(-(int64_t)ENOENT);
     }
+
+    int rc = vfs_ramfile_unlink(p);
+    if (rc == 0) return 0;
 
     /* If it exists but is not a ramfile, reject (read-only initramfs or directory). */
     uint32_t mode = 0;

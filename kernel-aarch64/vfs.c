@@ -310,6 +310,46 @@ int vfs_ramdir_create(const char *path_no_slash, uint32_t mode) {
     return 0;
 }
 
+static int path_has_prefix_dir(const char *path, const char *dir) {
+    if (!path || !dir) return 0;
+    uint64_t dlen = cstr_len_u64(dir);
+    for (uint64_t i = 0; i < dlen; i++) {
+        if (path[i] != dir[i]) return 0;
+    }
+    if (path[dlen] != '/') return 0;
+    return 1;
+}
+
+int vfs_ramdir_remove(const char *path_no_slash) {
+    if (!path_no_slash || path_no_slash[0] == '\0') {
+        return -(int)EINVAL;
+    }
+
+    int idx = ramdir_find(path_no_slash);
+    if (idx < 0) {
+        return -(int)ENOENT;
+    }
+
+    /* Must be empty with respect to overlay children. */
+    for (int i = 0; i < (int)MAX_RAMDIRS; i++) {
+        if (!g_ramdirs[i].used) continue;
+        if (path_has_prefix_dir(g_ramdirs[i].path, path_no_slash)) {
+            return -(int)ENOTEMPTY;
+        }
+    }
+    for (int i = 0; i < (int)MAX_RAMFILES; i++) {
+        if (!g_ramfiles[i].used) continue;
+        if (path_has_prefix_dir(g_ramfiles[i].path, path_no_slash)) {
+            return -(int)ENOTEMPTY;
+        }
+    }
+
+    g_ramdirs[idx].used = 0;
+    g_ramdirs[idx].mode = 0;
+    g_ramdirs[idx].path[0] = '\0';
+    return 0;
+}
+
 int vfs_ramfile_create(const char *path_no_slash, uint32_t mode) {
     if (!path_no_slash || path_no_slash[0] == '\0') {
         return -(int)ENOENT;

@@ -21,3 +21,4 @@
 #define ENAMETOOLONG 36ull
 #define ENOENT 2ull
 #define ENOSYS 38ull
+#define ENOTEMPTY 39ull
