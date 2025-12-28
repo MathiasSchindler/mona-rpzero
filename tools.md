@@ -57,7 +57,7 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | uncpio | Planned | 0 |
 | chmod | Planned | 0 |
 | find | Planned | 0 |
-| mkdir | Planned | 0 |
+| mkdir | Partial | 3 |
 | sed | Planned | 0 |
 | uniq | Planned | 0 |
 | chown | Planned | 0 |
