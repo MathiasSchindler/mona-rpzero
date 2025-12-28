@@ -54,11 +54,11 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | find | Planned | 0 |
 | mkdir | Partial | 3 |
 | sed | Planned | 0 |
-| uniq | Planned | 0 |
+| uniq | Partial | 4 |
 | chown | Planned | 0 |
 | free | Planned | 0 |
 | more | Planned | 0 |
-| seq | Planned | 0 |
+| seq | Partial | 3 |
 | uptime | Planned | 0 |
 | mount | Planned | 0 |
 | sh | Partial | 3 |
@@ -66,7 +66,7 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | clear | Planned | 0 |
 | mv | Planned | 0 |
 | sha256 | Planned | 0 |
-| wc | Planned | 0 |
+| wc | Partial | 4 |
 | cmp | Planned | 0 |
 | grep | Planned | 0 |
 | sleep | Partial | 1 |

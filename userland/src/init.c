@@ -82,6 +82,51 @@ int main(int argc, char **argv, char **envp) {
         sys_puts("[init] selftest fork failed\n");
     }
 
+    /* Tool smoke test: wc over a known file. */
+    sys_puts("[init] selftest: /bin/wc /uniq.txt\n");
+    pid = (long)sys_fork();
+    if (pid == 0) {
+        const char *const test_argv[] = {"wc", "/uniq.txt", 0};
+        (void)sys_execve("/bin/wc", test_argv, 0);
+        sys_puts("[init] selftest execve failed\n");
+        sys_exit_group(127);
+    } else if (pid > 0) {
+        int status = 0;
+        (void)sys_wait4(pid, &status, 0, 0);
+    } else {
+        sys_puts("[init] selftest fork failed\n");
+    }
+
+    /* Tool smoke test: uniq -c over a known file. */
+    sys_puts("[init] selftest: /bin/uniq -c /uniq.txt\n");
+    pid = (long)sys_fork();
+    if (pid == 0) {
+        const char *const test_argv[] = {"uniq", "-c", "/uniq.txt", 0};
+        (void)sys_execve("/bin/uniq", test_argv, 0);
+        sys_puts("[init] selftest execve failed\n");
+        sys_exit_group(127);
+    } else if (pid > 0) {
+        int status = 0;
+        (void)sys_wait4(pid, &status, 0, 0);
+    } else {
+        sys_puts("[init] selftest fork failed\n");
+    }
+
+    /* Tool smoke test: pipeline into wc. */
+    sys_puts("[init] selftest: /bin/sh -c \"seq 1 10 | wc -l\"\n");
+    pid = (long)sys_fork();
+    if (pid == 0) {
+        const char *const test_argv[] = {"sh", "-c", "seq 1 10 | wc -l", 0};
+        (void)sys_execve("/bin/sh", test_argv, 0);
+        sys_puts("[init] selftest execve failed\n");
+        sys_exit_group(127);
+    } else if (pid > 0) {
+        int status = 0;
+        (void)sys_wait4(pid, &status, 0, 0);
+    } else {
+        sys_puts("[init] selftest fork failed\n");
+    }
+
     sys_puts("[init] selftest: chdir /home; /bin/pwd\n");
     pid = (long)sys_fork();
     if (pid == 0) {

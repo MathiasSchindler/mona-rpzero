@@ -26,7 +26,7 @@ USER_BASE ?= 0x0000000000400000
 
 .PHONY: all clean check-toolchain check-nolibc initramfs
 
-all: check-nolibc $(BUILD)/echo.bin $(BUILD)/true.bin $(BUILD)/cat.bin $(BUILD)/ls.bin $(BUILD)/pwd.bin $(BUILD)/pid.bin $(BUILD)/uname.bin $(BUILD)/mkdir.bin $(BUILD)/brk.bin $(BUILD)/mmap.bin $(BUILD)/cwd.bin $(BUILD)/tty.bin $(BUILD)/sleep.bin $(BUILD)/compat.bin $(BUILD)/sh.bin $(BUILD)/init.bin
+all: check-nolibc $(BUILD)/echo.bin $(BUILD)/true.bin $(BUILD)/cat.bin $(BUILD)/ls.bin $(BUILD)/pwd.bin $(BUILD)/pid.bin $(BUILD)/uname.bin $(BUILD)/mkdir.bin $(BUILD)/seq.bin $(BUILD)/uniq.bin $(BUILD)/wc.bin $(BUILD)/brk.bin $(BUILD)/mmap.bin $(BUILD)/cwd.bin $(BUILD)/tty.bin $(BUILD)/sleep.bin $(BUILD)/compat.bin $(BUILD)/sh.bin $(BUILD)/init.bin
 
 initramfs: $(BUILD)/initramfs.cpio
 
@@ -86,6 +86,15 @@ $(BUILD)/uname.o: src/uname.c include/syscall.h | $(BUILD)
 $(BUILD)/mkdir.o: src/mkdir.c include/syscall.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(BUILD)/seq.o: src/seq.c include/syscall.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/uniq.o: src/uniq.c include/syscall.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/wc.o: src/wc.c include/syscall.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
 $(BUILD)/brk.o: src/brk.c include/syscall.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -132,6 +141,15 @@ $(BUILD)/uname.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(
 	$(LD) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
 
 $(BUILD)/mkdir.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/mkdir.o | check-toolchain
+	$(LD) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+
+$(BUILD)/seq.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/seq.o | check-toolchain
+	$(LD) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+
+$(BUILD)/uniq.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/uniq.o | check-toolchain
+	$(LD) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+
+$(BUILD)/wc.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/wc.o | check-toolchain
 	$(LD) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
 
 $(BUILD)/brk.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/brk.o | check-toolchain
@@ -182,6 +200,15 @@ $(BUILD)/uname.bin: $(BUILD)/uname.elf | check-toolchain
 $(BUILD)/mkdir.bin: $(BUILD)/mkdir.elf | check-toolchain
 	$(OBJCOPY) -O binary $< $@
 
+$(BUILD)/seq.bin: $(BUILD)/seq.elf | check-toolchain
+	$(OBJCOPY) -O binary $< $@
+
+$(BUILD)/uniq.bin: $(BUILD)/uniq.elf | check-toolchain
+	$(OBJCOPY) -O binary $< $@
+
+$(BUILD)/wc.bin: $(BUILD)/wc.elf | check-toolchain
+	$(OBJCOPY) -O binary $< $@
+
 $(BUILD)/brk.bin: $(BUILD)/brk.elf | check-toolchain
 	$(OBJCOPY) -O binary $< $@
 
@@ -217,6 +244,9 @@ $(BUILD)/initramfs.cpio: $(TOOLS_DIR)/mkcpio_newc.py all | $(BUILD)
 	@cp "$(BUILD)/pid.elf"  "$(INITRAMFS_ROOT)/bin/pid"
 	@cp "$(BUILD)/uname.elf"  "$(INITRAMFS_ROOT)/bin/uname"
 	@cp "$(BUILD)/mkdir.elf"  "$(INITRAMFS_ROOT)/bin/mkdir"
+	@cp "$(BUILD)/seq.elf"  "$(INITRAMFS_ROOT)/bin/seq"
+	@cp "$(BUILD)/uniq.elf"  "$(INITRAMFS_ROOT)/bin/uniq"
+	@cp "$(BUILD)/wc.elf"  "$(INITRAMFS_ROOT)/bin/wc"
 	@cp "$(BUILD)/brk.elf"  "$(INITRAMFS_ROOT)/bin/brk"
 	@cp "$(BUILD)/mmap.elf"  "$(INITRAMFS_ROOT)/bin/mmap"
 	@cp "$(BUILD)/cwd.elf"  "$(INITRAMFS_ROOT)/bin/cwd"
