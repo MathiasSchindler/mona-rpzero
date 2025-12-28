@@ -6,6 +6,36 @@ This document proposes an **incremental, build-safe** refactor that keeps behavi
 
 ---
 
+## Current status (as of 2025-12-28)
+
+Done (implemented + rebuilt + boot-smoke-tested in QEMU):
+
+- [x] Step 0 — Baseline snapshot & mapping (baseline confirmed via rebuild/boot)
+- [x] Step 1 — Extract VFS (initramfs + overlay)
+   - Landed as `kernel-aarch64/vfs.c` + `kernel-aarch64/include/vfs.h`.
+   - `exceptions.c` now calls `vfs_init()` during early proc init.
+- [x] Step 2 — Extract pipes
+   - Landed as `kernel-aarch64/pipe.c` + `kernel-aarch64/include/pipe.h`.
+   - `sys_read`/`sys_write` delegate to `pipe_read`/`pipe_write`; `sys_pipe2` uses the pipe module.
+- [x] Step 3 — Extract FD / file descriptions
+   - Landed as `kernel-aarch64/fd.c` + `kernel-aarch64/include/fd.h`.
+   - `g_descs` moved into `fd.c`; `exceptions.c` uses fd-table APIs.
+- [x] Step 4 — Extract process + scheduler
+   - Landed as `kernel-aarch64/proc.c` + `kernel-aarch64/include/proc.h` and `kernel-aarch64/sched.c` + `kernel-aarch64/include/sched.h`.
+   - Register helpers moved to `kernel-aarch64/include/regs.h` and shared by modules.
+
+Known nuance discovered while validating:
+
+- The helper script `tools/run-qemu-raspi3b.sh` expects explicit arguments (and may not be executable). Invoke via `bash` and pass `--kernel/--dtb/--append`.
+
+Remaining work (not done yet):
+
+- [ ] Step 5 — Shrink `exceptions.c` to “trap + dispatch” (optionally split syscall handlers by domain)
+
+This plan below is updated to reflect that Steps 1–3 are already completed.
+
+---
+
 ## Goals
 
 - Reduce the size and cognitive load of `kernel-aarch64/exceptions.c`.
@@ -109,6 +139,8 @@ Acceptance criteria:
 - `ls` still lists initramfs entries.
 - `mkdirat` overlay behavior still works (directories show up via `getdents64`).
 
+Status: Completed.
+
 ---
 
 ### Step 2 — Extract pipes
@@ -129,6 +161,8 @@ Rationale: Pipe code is self-contained and frequently touched when adding shell 
 Acceptance criteria:
 - Kernel builds and boots.
 - Shell pipelines still work (e.g. `seq 1 3 | wc -l`).
+
+Status: Completed.
 
 ---
 
@@ -151,6 +185,8 @@ Acceptance criteria:
 - Kernel builds and boots.
 - `openat/read/write/close/dup3` continue to function.
 
+Status: Completed.
+
 ---
 
 ### Step 4 — Extract process + scheduler
@@ -172,6 +208,15 @@ Acceptance criteria:
 - `execve` still starts userland.
 - `clone/wait4/exit` still behave.
 
+Status: Completed.
+
+Notes on what’s still in `exceptions.c` today (candidates to move):
+
+- Process table and process lifecycle: `proc_t`, `g_procs`, pid allocation, `proc_clear`, `proc_init_if_needed`, `proc_close_all_fds`.
+- Scheduling and context switching: runnable selection, `proc_switch_to`, any time-slicing helpers.
+- VMAs and mmap/brk bookkeeping (still tightly coupled to `proc_t`): the `vma_t` array, `sys_mmap`, `sys_munmap`, and helpers.
+- Path/cwd resolution state on the process (`cwd`) and helpers like `resolve_path`.
+
 ---
 
 ### Step 5 — Shrink `exceptions.c` to “trap + dispatch”
@@ -190,6 +235,8 @@ Optionally, create thin per-domain syscall files:
 
 Acceptance criteria:
 - `exceptions.c` is substantially smaller and easy to audit.
+
+Status: Not started.
 
 ---
 

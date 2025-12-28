@@ -31,8 +31,11 @@ OBJS := \
 	$(BUILD)/arch/enter_el0.o \
 	$(BUILD)/main.o \
 	$(BUILD)/exceptions.o \
+	$(BUILD)/proc.o \
+	$(BUILD)/sched.o \
 	$(BUILD)/vfs.o \
 	$(BUILD)/pipe.o \
+	$(BUILD)/fd.o \
 	$(BUILD)/elf64.o \
 	$(BUILD)/cpio_newc.o \
 	$(BUILD)/initramfs.o \
@@ -89,13 +92,22 @@ $(BUILD)/cpio_newc.o: cpio_newc.c include/cpio_newc.h | $(BUILD)
 $(BUILD)/initramfs.o: initramfs.c include/initramfs.h include/cpio_newc.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/exceptions.o: exceptions.c include/uart_pl011.h include/exceptions.h include/initramfs.h include/mmu.h include/linux_abi.h include/elf64.h include/cache.h include/vfs.h include/pipe.h | $(BUILD)
+$(BUILD)/exceptions.o: exceptions.c include/uart_pl011.h include/exceptions.h include/initramfs.h include/mmu.h include/linux_abi.h include/elf64.h include/cache.h include/vfs.h include/pipe.h include/fd.h include/proc.h include/sched.h include/regs.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/proc.o: proc.c include/proc.h include/fd.h include/pipe.h include/vfs.h include/mmu.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/sched.o: sched.c include/sched.h include/proc.h include/regs.h include/mmu.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/vfs.o: vfs.c include/vfs.h include/initramfs.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/pipe.o: pipe.c include/pipe.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/fd.o: fd.c include/fd.h include/pipe.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/elf64.o: elf64.c include/elf64.h | $(BUILD)

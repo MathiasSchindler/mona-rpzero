@@ -8,6 +8,10 @@
 #include "cache.h"
 #include "vfs.h"
 #include "pipe.h"
+#include "fd.h"
+#include "proc.h"
+#include "sched.h"
+#include "regs.h"
 
 /* Linux AArch64 syscall numbers we care about first. */
 #define __NR_getcwd    17ull
@@ -123,89 +127,6 @@ static uint64_t sys_reboot(uint64_t magic1, uint64_t magic2, uint64_t cmd, uint6
 
 #define AT_FDCWD ((int64_t)-100)
 
-enum {
-    MAX_PROCS = 16,
-    MAX_FDS = 32,
-    MAX_FILEDESCS = 64,
-    MAX_VMAS = 32,
-    MAX_PATH = 256,
-};
-
-typedef struct {
-    uint8_t used;
-    uint64_t base;
-    uint64_t len;
-} vma_t;
-
-typedef enum {
-    FDESC_UNUSED = 0,
-    FDESC_UART = 1,
-    FDESC_INITRAMFS = 2,
-    FDESC_PIPE = 3,
-} fdesc_kind_t;
-
-
-typedef struct {
-    uint32_t kind;
-    uint32_t refs;
-    union {
-        struct {
-            const uint8_t *data;
-            uint64_t size;
-            uint64_t off;
-            uint32_t mode;
-            uint8_t is_dir;
-            char dir_path[128];
-        } initramfs;
-        struct {
-            uint32_t pipe_id;
-            uint32_t end;
-        } pipe;
-        struct {
-            uint32_t unused;
-        } uart;
-    } u;
-} file_desc_t;
-
-typedef struct {
-    int16_t fd_to_desc[MAX_FDS];
-} fd_table_t;
-
-typedef enum {
-    PROC_UNUSED = 0,
-    PROC_RUNNABLE = 1,
-    PROC_WAITING = 2,
-    PROC_ZOMBIE = 3,
-} proc_state_t;
-
-typedef struct {
-    uint64_t pid;
-    uint64_t ppid;
-    proc_state_t state;
-    uint64_t ttbr0_pa;
-    uint64_t user_pa_base;
-    uint64_t heap_base;
-    uint64_t heap_end;
-    uint64_t stack_low;
-    char cwd[MAX_PATH];
-    uint64_t mmap_next;
-    vma_t vmas[MAX_VMAS];
-    trap_frame_t tf;
-    uint64_t elr;
-    uint64_t exit_code;
-    uint64_t clear_child_tid_user;
-    int64_t wait_target_pid;
-    uint64_t wait_status_user;
-    fd_table_t fdt;
-} proc_t;
-
-static file_desc_t g_descs[MAX_FILEDESCS];
-static proc_t g_procs[MAX_PROCS];
-static int g_cur_proc = 0;
-static int g_last_sched = 0;
-static uint64_t g_next_pid = 1;
-static int g_proc_inited = 0;
-
 #define PROC_TRACE 0
 
 static void proc_trace(const char *msg, uint64_t a, uint64_t b) {
@@ -224,51 +145,7 @@ static void proc_trace(const char *msg, uint64_t a, uint64_t b) {
 #endif
 }
 
-static inline void write_elr_el1(uint64_t v);
-static inline void write_sp_el0(uint64_t v);
 static int user_range_ok(uint64_t user_ptr, uint64_t len);
-
-static void tf_copy(trap_frame_t *dst, const trap_frame_t *src) {
-    for (uint64_t i = 0; i < 31; i++) {
-        dst->x[i] = src->x[i];
-    }
-    dst->sp_el0 = src->sp_el0;
-}
-
-static void tf_zero(trap_frame_t *tf) {
-    for (uint64_t i = 0; i < 31; i++) {
-        tf->x[i] = 0;
-    }
-    tf->sp_el0 = 0;
-}
-
-static void proc_clear(proc_t *p) {
-    p->pid = 0;
-    p->ppid = 0;
-    p->state = PROC_UNUSED;
-    p->ttbr0_pa = 0;
-    p->user_pa_base = 0;
-    p->heap_base = 0;
-    p->heap_end = 0;
-    p->stack_low = 0;
-    p->cwd[0] = '/';
-    p->cwd[1] = '\0';
-    p->mmap_next = 0;
-    for (uint64_t i = 0; i < MAX_VMAS; i++) {
-        p->vmas[i].used = 0;
-        p->vmas[i].base = 0;
-        p->vmas[i].len = 0;
-    }
-    tf_zero(&p->tf);
-    p->elr = 0;
-    p->exit_code = 0;
-    p->clear_child_tid_user = 0;
-    p->wait_target_pid = 0;
-    p->wait_status_user = 0;
-    for (uint64_t i = 0; i < MAX_FDS; i++) {
-        p->fdt.fd_to_desc[i] = -1;
-    }
-}
 
 static uint64_t sys_getuid(void) { return 0; }
 static uint64_t sys_geteuid(void) { return 0; }
@@ -544,95 +421,6 @@ static uint64_t sys_mkdirat(int64_t dirfd, uint64_t pathname_user, uint64_t mode
     return 0;
 }
 
-static void desc_clear(file_desc_t *d) {
-    d->kind = FDESC_UNUSED;
-    d->refs = 0;
-    d->u.initramfs.data = 0;
-    d->u.initramfs.size = 0;
-    d->u.initramfs.off = 0;
-    d->u.initramfs.mode = 0;
-    d->u.initramfs.is_dir = 0;
-    d->u.initramfs.dir_path[0] = '\0';
-    d->u.pipe.pipe_id = 0;
-    d->u.pipe.end = 0;
-}
-
-static int desc_alloc(void) {
-    for (int i = 0; i < (int)MAX_FILEDESCS; i++) {
-        if (g_descs[i].refs == 0) {
-            /* Reserve immediately so subsequent desc_alloc() calls cannot return the same slot. */
-            desc_clear(&g_descs[i]);
-            g_descs[i].refs = 1;
-            return i;
-        }
-    }
-    return -1;
-}
-
-static void desc_incref(int didx) {
-    if (didx < 0 || didx >= (int)MAX_FILEDESCS) return;
-    file_desc_t *d = &g_descs[didx];
-    if (d->refs == 0) return;
-    d->refs++;
-    if (d->kind == FDESC_PIPE) {
-        pipe_on_desc_incref(d->u.pipe.pipe_id, d->u.pipe.end);
-    }
-}
-
-static void desc_decref(int didx) {
-    if (didx < 0 || didx >= (int)MAX_FILEDESCS) return;
-    file_desc_t *d = &g_descs[didx];
-    if (d->refs == 0) return;
-
-    if (d->kind == FDESC_PIPE) {
-        pipe_on_desc_decref(d->u.pipe.pipe_id, d->u.pipe.end);
-    }
-
-    d->refs--;
-    if (d->refs == 0) {
-        desc_clear(d);
-    }
-}
-
-static int fd_get_desc_idx(proc_t *p, uint64_t fd) {
-    if (!p) return -1;
-    if (fd >= MAX_FDS) return -1;
-    int didx = p->fdt.fd_to_desc[fd];
-    if (didx < 0 || didx >= (int)MAX_FILEDESCS) return -1;
-    if (g_descs[didx].refs == 0) return -1;
-    return didx;
-}
-
-static int fd_alloc_into(proc_t *p, int min_fd, int didx) {
-    if (!p) return -1;
-    if (min_fd < 0) min_fd = 0;
-    for (int fd = min_fd; fd < (int)MAX_FDS; fd++) {
-        if (p->fdt.fd_to_desc[fd] < 0) {
-            p->fdt.fd_to_desc[fd] = (int16_t)didx;
-            desc_incref(didx);
-            return fd;
-        }
-    }
-    return -1;
-}
-
-static void fd_close(proc_t *p, uint64_t fd) {
-    if (!p) return;
-    if (fd >= MAX_FDS) return;
-    int didx = p->fdt.fd_to_desc[fd];
-    if (didx >= 0) {
-        p->fdt.fd_to_desc[fd] = -1;
-        desc_decref(didx);
-    }
-}
-
-static void proc_close_all_fds(proc_t *p) {
-    if (!p) return;
-    for (uint64_t fd = 0; fd < MAX_FDS; fd++) {
-        fd_close(p, fd);
-    }
-}
-
 static int user_range_ok(uint64_t user_ptr, uint64_t len) {
     if (len == 0) return 1;
     if (user_ptr < USER_REGION_BASE) return 0;
@@ -743,7 +531,7 @@ void exception_report(unsigned long kind,
 
 static uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len) {
     proc_t *cur = &g_procs[g_cur_proc];
-    int didx = fd_get_desc_idx(cur, fd);
+    int didx = fd_get_desc_idx(&cur->fdt, fd);
     if (didx < 0) {
         return (uint64_t)(-(int64_t)EBADF);
     }
@@ -764,52 +552,6 @@ static uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len) {
     }
 
     return (uint64_t)(-(int64_t)EBADF);
-}
-
-static void proc_init_if_needed(uint64_t elr, trap_frame_t *tf) {
-    if (g_proc_inited) return;
-
-    pipe_init();
-    for (uint64_t i = 0; i < MAX_FILEDESCS; i++) {
-        desc_clear(&g_descs[i]);
-    }
-    for (uint64_t i = 0; i < MAX_PROCS; i++) {
-        proc_clear(&g_procs[i]);
-    }
-
-    vfs_init();
-
-    /* Init process (pid 1) runs in the initial identity TTBR0. */
-    g_cur_proc = 0;
-    g_last_sched = 0;
-    proc_clear(&g_procs[0]);
-    g_procs[0].pid = g_next_pid++;
-    g_procs[0].ppid = 0;
-    g_procs[0].state = PROC_RUNNABLE;
-    g_procs[0].ttbr0_pa = mmu_ttbr0_read();
-    g_procs[0].user_pa_base = USER_REGION_BASE;
-    /* Heap is initialized on first execve(). */
-    g_procs[0].heap_base = 0;
-    g_procs[0].heap_end = 0;
-    g_procs[0].stack_low = tf->sp_el0;
-    tf_copy(&g_procs[0].tf, tf);
-    g_procs[0].elr = elr;
-
-    /* Create a shared UART file description and install it as fd 0/1/2. */
-    int uart_desc = desc_alloc();
-    if (uart_desc >= 0) {
-        g_descs[uart_desc].kind = FDESC_UART;
-        g_descs[uart_desc].refs = 1;
-
-        for (int i = 0; i < 3; i++) {
-            g_procs[0].fdt.fd_to_desc[i] = (int16_t)uart_desc;
-            desc_incref(uart_desc);
-        }
-        /* Balance initial refs=1 + 3 incref calls. */
-        desc_decref(uart_desc);
-    }
-
-    g_proc_inited = 1;
 }
 
 static uint64_t sys_brk(uint64_t newbrk) {
@@ -987,38 +729,6 @@ static uint64_t sys_munmap(uint64_t addr, uint64_t len) {
     return (uint64_t)(-(int64_t)EINVAL);
 }
 
-static int proc_find_free_slot(void) {
-    for (int i = 0; i < (int)MAX_PROCS; i++) {
-        if (g_procs[i].state == PROC_UNUSED) return i;
-    }
-    return -1;
-}
-
-static int sched_pick_next_runnable(void) {
-    for (int step = 1; step <= (int)MAX_PROCS; step++) {
-        int idx = (g_last_sched + step) % (int)MAX_PROCS;
-        if (g_procs[idx].state == PROC_RUNNABLE) {
-            g_last_sched = idx;
-            return idx;
-        }
-    }
-    return -1;
-}
-
-static void proc_switch_to(int idx, trap_frame_t *tf) {
-    g_cur_proc = idx;
-    mmu_ttbr0_write(g_procs[idx].ttbr0_pa);
-    write_elr_el1(g_procs[idx].elr);
-    tf_copy(tf, &g_procs[idx].tf);
-}
-
-static void sched_maybe_switch(trap_frame_t *tf) {
-    int next = sched_pick_next_runnable();
-    if (next >= 0 && next != g_cur_proc) {
-        proc_switch_to(next, tf);
-    }
-}
-
 static uint64_t sys_getcwd(uint64_t buf_user, uint64_t size) {
     proc_t *cur = &g_procs[g_cur_proc];
     uint64_t n = cstr_len_u64(cur->cwd);
@@ -1095,7 +805,7 @@ static uint64_t sys_nanosleep(uint64_t req_user, uint64_t rem_user) {
 
 static uint64_t sys_ioctl(uint64_t fd, uint64_t req, uint64_t argp_user) {
     proc_t *cur = &g_procs[g_cur_proc];
-    int didx = fd_get_desc_idx(cur, fd);
+    int didx = fd_get_desc_idx(&cur->fdt, fd);
     if (didx < 0) {
         return (uint64_t)(-(int64_t)EBADF);
     }
@@ -1203,7 +913,7 @@ static uint64_t sys_openat(int64_t dirfd, uint64_t pathname_user, uint64_t flags
         d->u.initramfs.dir_path[i] = '\0';
     }
 
-    int fd = fd_alloc_into(cur, 3, didx);
+    int fd = fd_alloc_into(&cur->fdt, 3, didx);
     /* fd_alloc_into() takes a ref; drop our creation ref. */
     desc_decref(didx);
     if (fd < 0) {
@@ -1217,16 +927,16 @@ static uint64_t sys_close(uint64_t fd) {
     if (fd >= MAX_FDS) {
         return (uint64_t)(-(int64_t)EBADF);
     }
-    if (fd_get_desc_idx(cur, fd) < 0) {
+    if (fd_get_desc_idx(&cur->fdt, fd) < 0) {
         return (uint64_t)(-(int64_t)EBADF);
     }
-    fd_close(cur, fd);
+    fd_close(&cur->fdt, fd);
     return 0;
 }
 
 static uint64_t sys_read(uint64_t fd, uint64_t buf_user, uint64_t len) {
     proc_t *cur = &g_procs[g_cur_proc];
-    int didx = fd_get_desc_idx(cur, fd);
+    int didx = fd_get_desc_idx(&cur->fdt, fd);
     if (didx < 0) {
         return (uint64_t)(-(int64_t)EBADF);
     }
@@ -1343,7 +1053,7 @@ static int dents_emit_cb(const char *name, uint32_t mode, void *ctx) {
 
 static uint64_t sys_getdents64(uint64_t fd, uint64_t dirp_user, uint64_t count) {
     proc_t *cur = &g_procs[g_cur_proc];
-    int didx = fd_get_desc_idx(cur, fd);
+    int didx = fd_get_desc_idx(&cur->fdt, fd);
     if (didx < 0) {
         return (uint64_t)(-(int64_t)EBADF);
     }
@@ -1377,7 +1087,7 @@ static uint64_t sys_getdents64(uint64_t fd, uint64_t dirp_user, uint64_t count) 
 
 static uint64_t sys_lseek(uint64_t fd, int64_t off, uint64_t whence) {
     proc_t *cur = &g_procs[g_cur_proc];
-    int didx = fd_get_desc_idx(cur, fd);
+    int didx = fd_get_desc_idx(&cur->fdt, fd);
     if (didx < 0) {
         return (uint64_t)(-(int64_t)EBADF);
     }
@@ -1418,7 +1128,7 @@ static uint64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags) {
     }
 
     proc_t *cur = &g_procs[g_cur_proc];
-    int didx = fd_get_desc_idx(cur, oldfd);
+    int didx = fd_get_desc_idx(&cur->fdt, oldfd);
     if (didx < 0) {
         return (uint64_t)(-(int64_t)EBADF);
     }
@@ -1428,7 +1138,7 @@ static uint64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags) {
     }
 
     /* Close destination if open. */
-    fd_close(cur, newfd);
+    fd_close(&cur->fdt, newfd);
 
     cur->fdt.fd_to_desc[newfd] = (int16_t)didx;
     desc_incref(didx);
@@ -1476,15 +1186,15 @@ static uint64_t sys_pipe2(uint64_t pipefd_user, uint64_t flags) {
 
     /* Install into current process FD table. */
     proc_t *cur = &g_procs[g_cur_proc];
-    int rfd = fd_alloc_into(cur, 0, rdesc);
-    int wfd = fd_alloc_into(cur, 0, wdesc);
+    int rfd = fd_alloc_into(&cur->fdt, 0, rdesc);
+    int wfd = fd_alloc_into(&cur->fdt, 0, wdesc);
     /* fd_alloc_into() increments refs; drop our creation refs. */
     desc_decref(rdesc);
     desc_decref(wdesc);
 
     if (rfd < 0 || wfd < 0) {
-        if (rfd >= 0) fd_close(cur, (uint64_t)rfd);
-        if (wfd >= 0) fd_close(cur, (uint64_t)wfd);
+        if (rfd >= 0) fd_close(&cur->fdt, (uint64_t)rfd);
+        if (wfd >= 0) fd_close(&cur->fdt, (uint64_t)wfd);
         pipe_abort((uint32_t)pid);
         return (uint64_t)(-(int64_t)EMFILE);
     }
@@ -1495,8 +1205,8 @@ static uint64_t sys_pipe2(uint64_t pipefd_user, uint64_t flags) {
     out[1] = (uint32_t)wfd;
 
     if (write_bytes_to_user(pipefd_user, out, sizeof(out)) != 0) {
-        fd_close(cur, (uint64_t)rfd);
-        fd_close(cur, (uint64_t)wfd);
+        fd_close(&cur->fdt, (uint64_t)rfd);
+        fd_close(&cur->fdt, (uint64_t)wfd);
         return (uint64_t)(-(int64_t)EFAULT);
     }
 
@@ -1622,14 +1332,6 @@ static uint64_t sys_clock_gettime(uint64_t clockid, uint64_t tp_user) {
         return (uint64_t)(-(int64_t)EFAULT);
     }
     return 0;
-}
-
-static inline void write_elr_el1(uint64_t v) {
-    __asm__ volatile("msr ELR_EL1, %0" :: "r"(v));
-}
-
-static inline void write_sp_el0(uint64_t v) {
-    __asm__ volatile("msr SP_EL0, %0" :: "r"(v));
 }
 
 static uint64_t sys_execve(trap_frame_t *tf, uint64_t pathname_user, uint64_t argv_user, uint64_t envp_user) {
