@@ -175,8 +175,10 @@ Acceptance:
 
 Notes:
 
-- EL2→EL1 drop implemented (when applicable), VBAR_EL1 installed early.
-- Exception dump includes `ESR_EL1`, `ELR_EL1`, `FAR_EL1`, `SPSR_EL1`.
+Implemented (summary):
+
+- EL normalization works (EL2→EL1 when applicable), with early `VBAR_EL1` installation.
+- Exception dumps are readable and include `ESR_EL1`, `ELR_EL1`, `FAR_EL1`, `SPSR_EL1`.
 
 ### Phase 2 — Memory management baseline
 
@@ -194,12 +196,11 @@ Acceptance:
 
 Notes:
 
-- PMM implemented and initialized from DTB-reported RAM range (QEMU).
-- MMU is now enabled with an identity map (TTBR0) plus a TTBR1 “higher-half” mapping of the same low physical region.
-- UART remains usable because the peripheral window is mapped as device memory.
-- I/D caches are enabled after cache maintenance; a small higher-half selftest reads a global via `KERNEL_VA_BASE + VA` and matches.
-- Kernel/user VA split is still intentionally minimal (single coarse user region mapping).
-  Per-process TTBR0 switching exists for `fork`/`wait4`, but this is not yet a full multi-process VM design.
+Implemented (summary):
+
+- PMM initializes from DTB-reported RAM.
+- MMU + caches are enabled with identity + higher-half mapping; UART stays mapped as device memory.
+- User address space remains intentionally coarse; per-process TTBR0 switching exists but is not yet a full VM.
 
 ### Phase 3 — Enter EL0 + minimal syscalls (`exit`, `write`)
 
@@ -219,9 +220,10 @@ Acceptance:
 
 Notes:
 
-- Implemented EL0 entry via `eret` and an EL1 exception fast-path for EL0 SVC.
-- Implemented minimal Linux-style syscalls: `write` (fd 1/2 → UART) and `exit_group`.
-- Validated with a tiny position-independent user-mode blob copied into a user-accessible sandbox region.
+Implemented (summary):
+
+- EL0 entry via `eret` and EL0 SVC handling is in place.
+- Minimal Linux-style syscall ABI works (initially `write` + `exit_group`) for syscall-only user payloads.
 
 ### Phase 4 — Initramfs filesystem (CPIO `newc`)
 
@@ -240,14 +242,11 @@ Acceptance:
 
 Notes:
 
-- Host-side builder added (`tools/mkcpio_newc.py`) producing `userland/build/initramfs.cpio` from `userland/initramfs/`.
-- Kernel now embeds the CPIO archive and implements `openat`/`read`/`close` backed by initramfs.
-- A syscall-only userland `cat` program is embedded as the EL0 payload and successfully prints `/hello.txt` in QEMU.
+Implemented (summary):
 
-Follow-ups:
-
-- Implemented `getdents64` + `newfstatat` + `lseek` (initramfs-backed) and a syscall-only `ls` that lists `/` via `getdents64`.
-- Payload selection now supports `make run USERPROG=ls`.
+- Initramfs (embedded CPIO `newc`) is wired in; host builder exists (`tools/mkcpio_newc.py`).
+- Read-only filesystem syscalls work (`openat/read/close/newfstatat/getdents64/lseek`) against initramfs.
+- User payload selection supports `make run USERPROG=...`.
 
 ### Phase 5 — ELF loader + `execve`
 
@@ -267,10 +266,10 @@ Acceptance:
 
 Notes:
 
-- UART stdin is now wired to `read(fd=0)` (serial RX).
-- Minimal `ET_EXEC` loader exists; `execve` loads binaries from initramfs into the user sandbox and updates `ELR_EL1`/`SP_EL0` for the next `eret`.
-- `execve` now builds a Linux-style initial stack: `argc`, `argv[]`, `envp[]`, and a minimal `auxv`.
-  Implemented `auxv` entries include `AT_PAGESZ`, `AT_ENTRY`, `AT_EXECFN`, `AT_PLATFORM`, `AT_RANDOM`, uid/gid placeholders and (best-effort) `AT_PHDR`/`AT_PHENT`/`AT_PHNUM`.
+Implemented (summary):
+
+- ELF64 `ET_EXEC` loading from initramfs works, including stack setup for `argc/argv/envp` + minimal auxv.
+- Serial RX is wired to `read(0)` so interactive userland is possible.
 
 ### Phase 6 — Processes: `fork` + `wait4`
 
@@ -288,8 +287,10 @@ Acceptance:
 
 Notes:
 
-- Implemented `fork` via a restricted `clone(SIGCHLD, ...)` and `wait4` for a single child process.
-- Userland now supports `sh -c "..."` for basic scriptability.
+Implemented (summary):
+
+- Process table + PID model exist.
+- `fork` (restricted `clone(SIGCHLD, ...)`) and `wait4` are sufficient for shell-style execution.
 
 ### Phase 7 — Pipes + fd duplication
 
@@ -306,8 +307,10 @@ Acceptance:
 
 Notes:
 
-- `pipe2` currently supports `flags=0` only.
-- Pipe reads use a simple non-blocking style (`-EAGAIN` when empty but writers exist); userland retries.
+Implemented (summary):
+
+- `pipe2` + `dup2` enable simple pipelines.
+- Current pipe semantics are minimal (flags=0 only; `-EAGAIN` retry model in userland).
 
 ### Phase 8 — Compatibility hardening
 
@@ -338,8 +341,33 @@ Notes:
 - Implemented (minimal): `set_tid_address` (stores clear_child_tid; best-effort clears it on exit).
 - Implemented (minimal): `set_robust_list`, `rt_sigaction`, `rt_sigprocmask` (stubs to keep simple static runtimes happy).
 - Implemented (minimal): `getrandom` (xorshift-based bytes, not cryptographically secure).
-- Userland smoke tests: `/bin/pid`, `/bin/uname`, `/bin/brk`, `/bin/mmap`, `/bin/cwd`, `/bin/tty`, `/bin/sleep`.
-- Userland smoke tests: `/bin/compat`.
+- Syscall-only tool status and smoke-test binaries are tracked in `tools.md`.
+
+#### Phase 8 follow-up idea: syscall-only “tool suite” (monacc-style)
+
+You mentioned a large set of syscall-only tools you built for x86-64 in your related monacc project. That’s an excellent fit for this repo too, because it keeps the “no libc” stance intact and gives us concrete, testable syscall targets.
+
+The practical way to tackle it here is to group tools by required kernel features and grow the kernel only as needed.
+
+Suggested priority groups:
+
+- **Group A: Already feasible on today’s kernel** (read-only initramfs + tty)
+  - Examples: `cat`, `ls`, `echo`, `true/false`, `uname`, `pwd` (uses `getcwd`), `sleep` (uses `nanosleep`), simple `stat`/`readlink` variants that only read metadata.
+
+- **Group B: Needs basic writable filesystem syscalls** (still small, high ROI)
+  - Kernel work: `mkdirat`, `unlinkat`, `renameat2` (or `renameat`), `linkat`, `symlinkat`, `readlinkat`, `fchmodat`, `fchownat`, `utimensat`.
+  - Tools unlocked: `mkdir`, `rmdir`, `rm`, `mv`, `cp`, `ln`, `touch`, `chmod`, `chown`, `readlink`.
+  - Note: our current filesystem is initramfs read-only; we’ll likely want a tiny writable in-memory FS (tmpfs/ramfs) or an overlay-on-initramfs.
+
+- **Group C: “procps-ish” tools** (requires a kernel story for process enumeration)
+  - Kernel work options: (1) add a small custom syscall like `proc_list`, or (2) implement a minimal `/proc` view.
+  - Tools: `ps`, `pstree`, `uptime`, `free`.
+
+- **Group D: networking tools** (big scope)
+  - Kernel work: `socket` family syscalls and a network device model; likely a separate phase.
+  - Tools: `wget6`, `ping6`, `nc6`, `dns6`, `ntp6`, etc.
+
+This lets us keep Phase 8 focused: first build out Groups A/B to get a useful “coreutils-ish” baseline, then decide whether Group C should be done via a syscall or `/proc`.
 
 ### Phase 9 — Move from QEMU to real Zero 2 W
 
@@ -371,10 +399,8 @@ This repo currently contains tooling and a Linux kernel image used for QEMU brin
 
 ## Near-term next action
 
-- Continue Phase 8 (syscall gaps for “boring” binaries):
-  - `getcwd`/`chdir`
-  - `nanosleep` (or a minimal sleep helper)
-  - small `ioctl` subset for tty detection (enough for common shells/tools)
+- Continue Phase 8 by porting/adding tools from `tools.md` and implementing only the kernel features they force:
+  - next high-ROI step is a tiny writable FS (tmpfs/overlay) + a first batch of `*at` syscalls (`mkdirat/unlinkat/renameat*`).
 
 ## SMP-friendly evolution plan (avoid big rewrites)
 
