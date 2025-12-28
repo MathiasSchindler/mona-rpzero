@@ -2,7 +2,9 @@
 
 #define AT_FDCWD ((int64_t)-100)
 #define AT_REMOVEDIR 0x200u
+#define EPERM 1
 #define EISDIR 21
+#define EROFS 30
 
 /* getdents64 d_type values (subset) */
 #define LINUX_DT_UNKNOWN 0
@@ -19,6 +21,8 @@ typedef struct {
 enum {
     MAX_PATH = 256,
     DENTS_BUF = 512,
+    MAX_ENTRIES = 32,
+    NAME_MAX_LOCAL = 64,
 };
 
 static void write_i64_dec(int64_t v) {
@@ -83,58 +87,89 @@ static int join_path(char *out, uint64_t cap, const char *base, const char *name
 static int rm_path(const char *path, int recursive, int force);
 
 static int rm_dir_children(const char *dir_path, int recursive, int force) {
-    uint64_t dfd = sys_openat((uint64_t)AT_FDCWD, dir_path, 0, 0);
-    if ((int64_t)dfd < 0) {
-        if (!force) {
-            sys_puts("rm: open dir failed rc=");
-            write_i64_dec((int64_t)dfd);
-            sys_puts(" path='");
-            sys_puts(dir_path);
-            sys_puts("'\n");
-        }
-        return -1;
-    }
-
-    char buf[DENTS_BUF];
-    for (;;) {
-        uint64_t nread = sys_getdents64(dfd, buf, sizeof(buf));
-        if ((int64_t)nread < 0) {
+    /* Deleting while iterating a directory can confuse directory offsets.
+     * Robust approach: snapshot a small batch of names, close, delete them,
+     * then re-open and repeat until empty.
+     */
+    for (int round = 0; round < 64; round++) {
+        uint64_t dfd = sys_openat((uint64_t)AT_FDCWD, dir_path, 0, 0);
+        if ((int64_t)dfd < 0) {
             if (!force) {
-                sys_puts("rm: getdents64 failed rc=");
-                write_i64_dec((int64_t)nread);
+                sys_puts("rm: open dir failed rc=");
+                write_i64_dec((int64_t)dfd);
                 sys_puts(" path='");
                 sys_puts(dir_path);
                 sys_puts("'\n");
             }
-            (void)sys_close(dfd);
             return -1;
         }
-        if (nread == 0) break;
 
-        uint64_t pos = 0;
-        while (pos + 19u <= nread) {
-            linux_dirent64_t *de = (linux_dirent64_t *)(void *)(buf + pos);
-            if (de->d_reclen == 0) break;
-            if (pos + de->d_reclen > nread) break;
+        char names[MAX_ENTRIES][NAME_MAX_LOCAL];
+        int name_count = 0;
 
-            const char *name = de->d_name;
-            if (name && name[0] != '\0' && !streq(name, ".") && !streq(name, "..")) {
-                char child[MAX_PATH];
-                if (join_path(child, sizeof(child), dir_path, name) == 0) {
-                    (void)rm_path(child, recursive, force);
-                } else if (!force) {
-                    sys_puts("rm: path too long under '");
+        char buf[DENTS_BUF];
+        for (;;) {
+            uint64_t nread = sys_getdents64(dfd, buf, sizeof(buf));
+            if ((int64_t)nread < 0) {
+                if (!force) {
+                    sys_puts("rm: getdents64 failed rc=");
+                    write_i64_dec((int64_t)nread);
+                    sys_puts(" path='");
                     sys_puts(dir_path);
                     sys_puts("'\n");
                 }
+                (void)sys_close(dfd);
+                return -1;
+            }
+            if (nread == 0) break;
+
+            uint64_t pos = 0;
+            while (pos + 19u <= nread) {
+                linux_dirent64_t *de = (linux_dirent64_t *)(void *)(buf + pos);
+                if (de->d_reclen == 0) break;
+                if (pos + de->d_reclen > nread) break;
+
+                const char *name = de->d_name;
+                if (name && name[0] != '\0' && !streq(name, ".") && !streq(name, "..")) {
+                    if (name_count < (int)MAX_ENTRIES) {
+                        uint64_t n = cstr_len_u64(name);
+                        if (n + 1 > (uint64_t)NAME_MAX_LOCAL) n = (uint64_t)NAME_MAX_LOCAL - 1;
+                        for (uint64_t i = 0; i < n; i++) names[name_count][i] = name[i];
+                        names[name_count][n] = '\0';
+                        name_count++;
+                    }
+                }
+
+                pos += de->d_reclen;
             }
 
-            pos += de->d_reclen;
+            if (name_count >= (int)MAX_ENTRIES) break;
+        }
+
+        (void)sys_close(dfd);
+
+        if (name_count == 0) {
+            return 0;
+        }
+
+        for (int i = 0; i < name_count; i++) {
+            char child[MAX_PATH];
+            if (join_path(child, sizeof(child), dir_path, names[i]) == 0) {
+                (void)rm_path(child, recursive, force);
+            } else if (!force) {
+                sys_puts("rm: path too long under '");
+                sys_puts(dir_path);
+                sys_puts("'\n");
+            }
         }
     }
 
-    (void)sys_close(dfd);
-    return 0;
+    if (!force) {
+        sys_puts("rm: too many entries/rounds under '");
+        sys_puts(dir_path);
+        sys_puts("'\n");
+    }
+    return -1;
 }
 
 static int rm_path(const char *path, int recursive, int force) {
@@ -143,12 +178,15 @@ static int rm_path(const char *path, int recursive, int force) {
         return 0;
     }
 
-    if (recursive && (int64_t)rc == -(int64_t)EISDIR) {
-        /* Depth-first: delete children, then remove the directory itself. */
-        (void)rm_dir_children(path, recursive, force);
-        uint64_t drc = sys_unlinkat((uint64_t)AT_FDCWD, path, (uint64_t)AT_REMOVEDIR);
-        if ((int64_t)drc >= 0) return 0;
-        rc = drc;
+    if (recursive && ((int64_t)rc == -(int64_t)EISDIR || (int64_t)rc == -(int64_t)EPERM || (int64_t)rc == -(int64_t)EROFS)) {
+        /* Some kernels return EPERM/EROFS when attempting to unlink a directory.
+         * Try treating it as a directory if we can open it.
+         */
+        if (rm_dir_children(path, recursive, force) == 0) {
+            uint64_t drc = sys_unlinkat((uint64_t)AT_FDCWD, path, (uint64_t)AT_REMOVEDIR);
+            if ((int64_t)drc >= 0) return 0;
+            rc = drc;
+        }
     }
 
     if (!force) {

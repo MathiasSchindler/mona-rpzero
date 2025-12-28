@@ -908,6 +908,11 @@ uint64_t sys_unlinkat(int64_t dirfd, uint64_t pathname_user, uint64_t flags) {
         int drc = vfs_ramdir_remove(p);
         if (drc == 0) return 0;
 
+        /* Propagate meaningful overlay errors (e.g. non-empty). */
+        if (drc == -(int)ENOTEMPTY) {
+            return (uint64_t)(int64_t)drc;
+        }
+
         /* If it exists but is not a removable overlay dir, translate errors. */
         uint32_t mode = 0;
         if (vfs_lookup_abs(abs_path, 0, 0, &mode) == 0) {
