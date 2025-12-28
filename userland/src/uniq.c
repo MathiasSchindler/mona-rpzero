@@ -15,12 +15,6 @@ static int streq(const char *a, const char *b) {
     return *a == *b;
 }
 
-static uint64_t cstr_len_u64_local(const char *s) {
-    uint64_t n = 0;
-    while (s && s[n] != '\0') n++;
-    return n;
-}
-
 static int cstr_eq_local(const char *a, const char *b) {
     uint64_t i = 0;
     while (a[i] && b[i]) {

@@ -13,9 +13,24 @@ INITRAMFS_ROOT := $(BUILD)/initramfs-root
 
 CFLAGS := -O2 -g -ffreestanding -nostdlib -nostartfiles \
 	-std=c11 -fno-builtin -fno-stack-protector -fno-pic -fno-plt -fno-asynchronous-unwind-tables \
+	-ffunction-sections -fdata-sections \
 	-mgeneral-regs-only -mstrict-align \
 	-Iinclude -Wall -Wextra -Wno-unused-parameter \
 	-Werror=implicit-function-declaration -Werror=implicit-int
+
+LDFLAGS := --gc-sections -z max-page-size=4096 -z common-page-size=4096
+
+# Keep full debug info in separate files while shipping stripped ELFs in initramfs.
+# GDB can pick up symbols via the embedded .gnu_debuglink (files live next to the build artifacts).
+SPLIT_DEBUG ?= 1
+
+define POSTLINK
+	@if [[ "$(SPLIT_DEBUG)" == "1" ]]; then \
+		$(OBJCOPY) --only-keep-debug $@ $@.debug; \
+		$(OBJCOPY) --strip-all $@; \
+		$(OBJCOPY) --add-gnu-debuglink=$@.debug $@; \
+	fi
+endef
 
 # User programs are linked to run at USER_REGION_BASE (identity-mapped in the kernel).
 USER_BASE ?= 0x0000000000400000
@@ -120,61 +135,80 @@ $(BUILD)/sh.o: src/sh.c include/syscall.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/echo.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/echo.o | check-toolchain
-	$(LD) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
 
 $(BUILD)/true.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/true.o | check-toolchain
-	$(LD) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
 
 $(BUILD)/cat.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/cat.o | check-toolchain
-	$(LD) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
 
 $(BUILD)/ls.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/ls.o | check-toolchain
-	$(LD) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
 
 $(BUILD)/pwd.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/pwd.o | check-toolchain
-	$(LD) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
 
 $(BUILD)/pid.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/pid.o | check-toolchain
-	$(LD) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
 
 $(BUILD)/uname.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/uname.o | check-toolchain
-	$(LD) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
 
 $(BUILD)/mkdir.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/mkdir.o | check-toolchain
-	$(LD) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
 
 $(BUILD)/seq.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/seq.o | check-toolchain
-	$(LD) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
 
 $(BUILD)/uniq.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/uniq.o | check-toolchain
-	$(LD) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
 
 $(BUILD)/wc.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/wc.o | check-toolchain
-	$(LD) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
 
 $(BUILD)/brk.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/brk.o | check-toolchain
-	$(LD) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
 
 $(BUILD)/mmap.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/mmap.o | check-toolchain
-	$(LD) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
 
 $(BUILD)/cwd.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/cwd.o | check-toolchain
-	$(LD) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
 
 $(BUILD)/tty.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/tty.o | check-toolchain
-	$(LD) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
 
 $(BUILD)/sleep.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/sleep.o | check-toolchain
-	$(LD) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
 
 $(BUILD)/compat.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/compat.o | check-toolchain
-	$(LD) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
 
 $(BUILD)/init.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/init.o | check-toolchain
-	$(LD) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
 
 $(BUILD)/sh.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/sh.o | check-toolchain
-	$(LD) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
 
 $(BUILD)/echo.bin: $(BUILD)/echo.elf | check-toolchain
 	$(OBJCOPY) -O binary $< $@
