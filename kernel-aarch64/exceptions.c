@@ -1,6 +1,7 @@
 #include "exceptions.h"
 
 #include "errno.h"
+#include "mmu.h"
 #include "proc.h"
 #include "sched.h"
 #include "syscalls.h"
@@ -92,16 +93,32 @@ void exception_report(uint64_t kind,
                       uint64_t elr,
                       uint64_t far,
                       uint64_t spsr) {
+    uint64_t ec = (esr >> 26) & 0x3Full;
+    uint64_t il = (esr >> 25) & 0x1ull;
+    uint64_t iss = esr & 0x01FFFFFFull;
+
     uart_write("\n[exception] kind=");
     uart_write(exc_kind_name(kind));
     uart_write(" esr=");
     uart_write_hex_u64(esr);
+    uart_write(" ec=");
+    uart_write_hex_u64(ec);
+    uart_write(" il=");
+    uart_write_hex_u64(il);
+    uart_write(" iss=");
+    uart_write_hex_u64(iss);
     uart_write(" elr=");
     uart_write_hex_u64(elr);
     uart_write(" far=");
     uart_write_hex_u64(far);
     uart_write(" spsr=");
     uart_write_hex_u64(spsr);
+
+    if (kind == 8 && elr >= USER_REGION_BASE && (elr + 4u) <= (USER_REGION_BASE + USER_REGION_SIZE)) {
+        uint32_t insn = *(volatile uint32_t *)(uintptr_t)elr;
+        uart_write(" insn=");
+        uart_write_hex_u64((uint64_t)insn);
+    }
     uart_write("\n");
 }
 

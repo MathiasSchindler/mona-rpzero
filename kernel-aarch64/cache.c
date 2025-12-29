@@ -43,6 +43,10 @@ static inline void dc_isw(uint64_t v) {
     __asm__ volatile("dc isw, %0" :: "r"(v) : "memory");
 }
 
+static inline void dc_cisw(uint64_t v) {
+    __asm__ volatile("dc cisw, %0" :: "r"(v) : "memory");
+}
+
 static inline unsigned ulog2_floor_u32(uint32_t v) {
     return 31u - (unsigned)__builtin_clz(v);
 }
@@ -99,6 +103,56 @@ void cache_invalidate_all(void) {
     }
 
     dsb_sy();
+    isb();
+}
+
+void cache_clean_invalidate_all(void) {
+    /* Clean+invalidate data/unified caches by set/way.
+     * This is heavy but safe: it avoids losing dirty lines and prevents stale
+     * VA-tagged cache lines from leaking across address space switches.
+     */
+    uint64_t clidr = read_clidr_el1();
+
+    for (unsigned level = 0; level < 7; level++) {
+        unsigned ctype = (unsigned)((clidr >> (level * 3)) & 0x7);
+        if (ctype == 0) {
+            continue; /* no cache at this level */
+        }
+        /* 2 = instruction only; skip. 1=data, 3=separate, 4=unified */
+        if (ctype == 2) {
+            continue;
+        }
+
+        /* Select data/unified cache at this level: InD=0 */
+        write_csselr_el1((uint64_t)(level << 1));
+        uint64_t ccsidr = read_ccsidr_el1();
+
+        unsigned line_len = (unsigned)((ccsidr & 0x7) + 4); /* log2(bytes per line) */
+        unsigned num_ways = (unsigned)(((ccsidr >> 3) & 0x3FF) + 1);
+        unsigned num_sets = (unsigned)(((ccsidr >> 13) & 0x7FFF) + 1);
+
+        unsigned way_bits = (num_ways > 1) ? (ulog2_floor_u32((uint32_t)num_ways - 1) + 1) : 0;
+        unsigned way_shift = 32u - way_bits;
+
+        for (unsigned way = 0; way < num_ways; way++) {
+            for (unsigned set = 0; set < num_sets; set++) {
+                uint64_t sw = 0;
+                sw |= (uint64_t)(level << 1);
+                sw |= (uint64_t)set << line_len;
+                if (way_bits != 0) {
+                    sw |= (uint64_t)way << way_shift;
+                }
+                dc_cisw(sw);
+            }
+        }
+    }
+
+    dsb_sy();
+
+    /* Invalidate instruction cache to PoU */
+    dsb_ish();
+    ic_iallu();
+    dsb_ish();
     isb();
 }
 

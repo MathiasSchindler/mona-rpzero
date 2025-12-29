@@ -6,5 +6,10 @@
 
 void cache_invalidate_all(void);
 
+/* Clean+invalidate D-cache and invalidate I-cache (global).
+ * Useful when switching between distinct EL0 address spaces without ASIDs.
+ */
+void cache_clean_invalidate_all(void);
+
 /* Clean D-cache to PoU and invalidate I-cache for a VA range. */
 void cache_sync_icache_for_range(uint64_t start, uint64_t size);

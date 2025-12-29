@@ -1,5 +1,6 @@
 #include "sched.h"
 
+#include "cache.h"
 #include "mmu.h"
 #include "proc.h"
 #include "regs.h"
@@ -17,6 +18,12 @@ int sched_pick_next_runnable(void) {
 
 void proc_switch_to(int idx, trap_frame_t *tf) {
     g_cur_proc = idx;
+
+    /* With per-process TTBR0 but no ASIDs, user VA caching can alias across
+     * processes. Flush caches on switch to avoid stale instructions/data.
+     */
+    cache_clean_invalidate_all();
+
     mmu_ttbr0_write(g_procs[idx].ttbr0_pa);
     write_elr_el1(g_procs[idx].elr);
     tf_copy(tf, &g_procs[idx].tf);
