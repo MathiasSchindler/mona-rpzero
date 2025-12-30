@@ -17,7 +17,6 @@ This document is an actionable work plan for this repo’s **bare-metal AArch64 
 
 - `make test` boots QEMU and runs `kinit` selftests successfully.
 - Core syscalls include process model (`fork/exec/wait`), pipes/dup, initramfs + RAM overlay FS, and time.
-- Recent additions include `time`, `readelf`, symlinks (`symlinkat/readlinkat`) and `ln -s`.
 
 ---
 

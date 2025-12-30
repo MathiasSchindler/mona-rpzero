@@ -41,23 +41,7 @@ static int follow_symlink_data(const char *link_abs, const uint8_t *tgt, uint64_
 
     /* Determine parent directory of link_abs. */
     char parent[MAX_PATH];
-    {
-        uint64_t n = cstr_len_u64(link_abs);
-        if (n + 1 > sizeof(parent)) return -1;
-        for (uint64_t i = 0; i <= n; i++) parent[i] = link_abs[i];
-
-        int last = -1;
-        for (uint64_t i = 0; parent[i] != '\0'; i++) {
-            if (parent[i] == '/') last = (int)i;
-        }
-        if (last < 0) return -1;
-        if (last == 0) {
-            parent[0] = '/';
-            parent[1] = '\0';
-        } else {
-            parent[last] = '\0';
-        }
-    }
+    if (abs_path_parent_dir(link_abs, parent, sizeof(parent)) != 0) return -1;
 
     if (target[0] == '/') {
         return normalize_abs_path(target, out_abs, outsz);
@@ -221,6 +205,12 @@ uint64_t sys_symlinkat(uint64_t target_user, int64_t newdirfd, uint64_t linkpath
         return (uint64_t)(-(int64_t)EINVAL);
     }
 
+    char link_no_slash[MAX_PATH];
+    {
+        int prc = abs_path_to_no_slash_trim(link_abs, link_no_slash, sizeof(link_no_slash));
+        if (prc != 0) return (uint64_t)(int64_t)prc;
+    }
+
     if (cstr_eq_u64(link_abs, "/")) {
         return (uint64_t)(-(int64_t)EPERM);
     }
@@ -232,42 +222,10 @@ uint64_t sys_symlinkat(uint64_t target_user, int64_t newdirfd, uint64_t linkpath
     }
 
     /* Parent must exist and be a directory. */
-    const char *p = link_abs;
-    while (*p == '/') p++;
-    if (*p == '\0') {
-        return (uint64_t)(-(int64_t)EINVAL);
-    }
-
-    char parent_no_slash[MAX_PATH];
-    {
-        uint64_t n = cstr_len_u64(p);
-        if (n + 1 > sizeof(parent_no_slash)) return (uint64_t)(-(int64_t)ENAMETOOLONG);
-        for (uint64_t i = 0; i <= n; i++) parent_no_slash[i] = p[i];
-        if (n == 0) return (uint64_t)(-(int64_t)EINVAL);
-
-        while (n > 0 && parent_no_slash[n - 1] == '/') {
-            parent_no_slash[n - 1] = '\0';
-            n--;
-        }
-        if (n == 0) return (uint64_t)(-(int64_t)EINVAL);
-
-        int last = -1;
-        for (uint64_t i = 0; parent_no_slash[i] != '\0'; i++) {
-            if (parent_no_slash[i] == '/') last = (int)i;
-        }
-        if (last >= 0) parent_no_slash[last] = '\0';
-        else parent_no_slash[0] = '\0';
-    }
-
     char parent_abs[MAX_PATH];
-    if (parent_no_slash[0] == '\0') {
-        parent_abs[0] = '/';
-        parent_abs[1] = '\0';
-    } else {
-        uint64_t pn = cstr_len_u64(parent_no_slash);
-        if (pn + 2 > sizeof(parent_abs)) return (uint64_t)(-(int64_t)ENAMETOOLONG);
-        parent_abs[0] = '/';
-        for (uint64_t i = 0; i <= pn; i++) parent_abs[1 + i] = parent_no_slash[i];
+    {
+        int prc = abs_path_parent_dir(link_abs, parent_abs, sizeof(parent_abs));
+        if (prc != 0) return (uint64_t)(int64_t)prc;
     }
 
     uint32_t pmode = 0;
@@ -278,12 +236,12 @@ uint64_t sys_symlinkat(uint64_t target_user, int64_t newdirfd, uint64_t linkpath
         return (uint64_t)(-(int64_t)ENOTDIR);
     }
 
-    int crc = vfs_ramfile_create(p, S_IFLNK | 0777u);
+    int crc = vfs_ramfile_create(link_no_slash, S_IFLNK | 0777u);
     if (crc != 0) return (uint64_t)(int64_t)crc;
 
     uint32_t file_id = 0;
     if (vfs_ramfile_find_abs(link_abs, &file_id) != 0) {
-        (void)vfs_ramfile_unlink(p);
+        (void)vfs_ramfile_unlink(link_no_slash);
         return (uint64_t)(-(int64_t)ENOENT);
     }
 
@@ -292,18 +250,18 @@ uint64_t sys_symlinkat(uint64_t target_user, int64_t newdirfd, uint64_t linkpath
     uint64_t cap = 0;
     uint32_t mode = 0;
     if (vfs_ramfile_get(file_id, &data, &size, &cap, &mode) != 0) {
-        (void)vfs_ramfile_unlink(p);
+        (void)vfs_ramfile_unlink(link_no_slash);
         return (uint64_t)(-(int64_t)ENOENT);
     }
 
     uint64_t tlen = cstr_len_u64(target_in);
     if (tlen > cap) {
-        (void)vfs_ramfile_unlink(p);
+        (void)vfs_ramfile_unlink(link_no_slash);
         return (uint64_t)(-(int64_t)ENAMETOOLONG);
     }
     for (uint64_t i = 0; i < tlen; i++) data[i] = (uint8_t)target_in[i];
     if (vfs_ramfile_set_size(file_id, tlen) != 0) {
-        (void)vfs_ramfile_unlink(p);
+        (void)vfs_ramfile_unlink(link_no_slash);
         return (uint64_t)(-(int64_t)EINVAL);
     }
     return 0;
@@ -328,14 +286,14 @@ uint64_t sys_mkdirat(int64_t dirfd, uint64_t pathname_user, uint64_t mode) {
         return (uint64_t)(-(int64_t)EINVAL);
     }
 
-    /* mkdir("/") => EEXIST */
-    if (cstr_eq_u64(abs_path, "/")) {
-        return (uint64_t)(-(int64_t)EEXIST);
+    char p[MAX_PATH];
+    {
+        int prc = abs_path_to_no_slash_trim(abs_path, p, sizeof(p));
+        if (prc != 0) return (uint64_t)(int64_t)prc;
     }
 
-    const char *p = abs_path;
-    while (*p == '/') p++;
-    if (*p == '\0') {
+    /* mkdir("/") => EEXIST */
+    if (cstr_eq_u64(abs_path, "/")) {
         return (uint64_t)(-(int64_t)EEXIST);
     }
 
@@ -348,40 +306,10 @@ uint64_t sys_mkdirat(int64_t dirfd, uint64_t pathname_user, uint64_t mode) {
     }
 
     /* Parent must exist and be a directory. */
-    char parent_no_slash[MAX_PATH];
-    {
-        uint64_t n = cstr_len_u64(p);
-        if (n + 1 > sizeof(parent_no_slash)) return (uint64_t)(-(int64_t)ENAMETOOLONG);
-        for (uint64_t i = 0; i <= n; i++) parent_no_slash[i] = p[i];
-        if (n == 0) return (uint64_t)(-(int64_t)EINVAL);
-
-        /* Trim trailing slashes just in case. */
-        while (n > 0 && parent_no_slash[n - 1] == '/') {
-            parent_no_slash[n - 1] = '\0';
-            n--;
-        }
-
-        /* Find last '/'. */
-        int last = -1;
-        for (uint64_t i = 0; parent_no_slash[i] != '\0'; i++) {
-            if (parent_no_slash[i] == '/') last = (int)i;
-        }
-        if (last >= 0) {
-            parent_no_slash[last] = '\0';
-        } else {
-            parent_no_slash[0] = '\0';
-        }
-    }
-
     char parent_abs[MAX_PATH];
-    if (parent_no_slash[0] == '\0') {
-        parent_abs[0] = '/';
-        parent_abs[1] = '\0';
-    } else {
-        uint64_t pn = cstr_len_u64(parent_no_slash);
-        if (pn + 2 > sizeof(parent_abs)) return (uint64_t)(-(int64_t)ENAMETOOLONG);
-        parent_abs[0] = '/';
-        for (uint64_t i = 0; i <= pn; i++) parent_abs[1 + i] = parent_no_slash[i];
+    {
+        int prc = abs_path_parent_dir(abs_path, parent_abs, sizeof(parent_abs));
+        if (prc != 0) return (uint64_t)(int64_t)prc;
     }
 
     uint32_t pmode = 0;
@@ -431,6 +359,17 @@ uint64_t sys_linkat(int64_t olddirfd, uint64_t oldpath_user, int64_t newdirfd, u
         return (uint64_t)(-(int64_t)EINVAL);
     }
 
+    char old_no_slash[MAX_PATH];
+    {
+        int prc = abs_path_to_no_slash_trim(old_abs, old_no_slash, sizeof(old_no_slash));
+        if (prc != 0) return (uint64_t)(int64_t)prc;
+    }
+    char new_no_slash[MAX_PATH];
+    {
+        int prc = abs_path_to_no_slash_trim(new_abs, new_no_slash, sizeof(new_no_slash));
+        if (prc != 0) return (uint64_t)(int64_t)prc;
+    }
+
     /* Special cases. */
     if (cstr_eq_u64(old_abs, "/") || cstr_eq_u64(new_abs, "/")) {
         return (uint64_t)(-(int64_t)EPERM);
@@ -460,46 +399,10 @@ uint64_t sys_linkat(int64_t olddirfd, uint64_t oldpath_user, int64_t newdirfd, u
     }
 
     /* Parent of new path must exist and be a directory. */
-    const char *np = new_abs;
-    while (*np == '/') np++;
-    if (*np == '\0') {
-        return (uint64_t)(-(int64_t)EINVAL);
-    }
-
-    char parent_no_slash[MAX_PATH];
-    {
-        uint64_t n = cstr_len_u64(np);
-        if (n + 1 > sizeof(parent_no_slash)) return (uint64_t)(-(int64_t)ENAMETOOLONG);
-        for (uint64_t i = 0; i <= n; i++) parent_no_slash[i] = np[i];
-
-        /* Trim trailing slashes just in case. */
-        while (n > 0 && parent_no_slash[n - 1] == '/') {
-            parent_no_slash[n - 1] = '\0';
-            n--;
-        }
-        if (n == 0) return (uint64_t)(-(int64_t)EINVAL);
-
-        /* Find last '/'. */
-        int last = -1;
-        for (uint64_t i = 0; parent_no_slash[i] != '\0'; i++) {
-            if (parent_no_slash[i] == '/') last = (int)i;
-        }
-        if (last >= 0) {
-            parent_no_slash[last] = '\0';
-        } else {
-            parent_no_slash[0] = '\0';
-        }
-    }
-
     char parent_abs[MAX_PATH];
-    if (parent_no_slash[0] == '\0') {
-        parent_abs[0] = '/';
-        parent_abs[1] = '\0';
-    } else {
-        uint64_t pn = cstr_len_u64(parent_no_slash);
-        if (pn + 2 > sizeof(parent_abs)) return (uint64_t)(-(int64_t)ENAMETOOLONG);
-        parent_abs[0] = '/';
-        for (uint64_t i = 0; i <= pn; i++) parent_abs[1 + i] = parent_no_slash[i];
+    {
+        int prc = abs_path_parent_dir(new_abs, parent_abs, sizeof(parent_abs));
+        if (prc != 0) return (uint64_t)(int64_t)prc;
     }
 
     uint32_t pmode = 0;
@@ -511,9 +414,7 @@ uint64_t sys_linkat(int64_t olddirfd, uint64_t oldpath_user, int64_t newdirfd, u
     }
 
     /* Create the overlay hardlink. */
-    const char *op = old_abs;
-    while (*op == '/') op++;
-    int rc = vfs_ramfile_link(op, np);
+    int rc = vfs_ramfile_link(old_no_slash, new_no_slash);
     if (rc != 0) return (uint64_t)(int64_t)rc;
     return 0;
 }
@@ -697,47 +598,17 @@ uint64_t sys_openat(int64_t dirfd, uint64_t pathname_user, uint64_t flags, uint6
             return (uint64_t)(-(int64_t)EISDIR);
         }
 
-        const char *p = path;
-        while (*p == '/') p++;
-        if (*p == '\0') {
-            return (uint64_t)(-(int64_t)EISDIR);
+        char p[MAX_PATH];
+        {
+            int prc = abs_path_to_no_slash_trim(path, p, sizeof(p));
+            if (prc != 0) return (uint64_t)(int64_t)prc;
         }
 
         /* Parent must exist and be a directory. */
-        char parent_no_slash[MAX_PATH];
-        {
-            uint64_t n = cstr_len_u64(p);
-            if (n + 1 > sizeof(parent_no_slash)) return (uint64_t)(-(int64_t)ENAMETOOLONG);
-            for (uint64_t i = 0; i <= n; i++) parent_no_slash[i] = p[i];
-
-            /* Trim trailing slashes just in case. */
-            while (n > 0 && parent_no_slash[n - 1] == '/') {
-                parent_no_slash[n - 1] = '\0';
-                n--;
-            }
-            if (n == 0) return (uint64_t)(-(int64_t)EINVAL);
-
-            /* Find last '/'. */
-            int last = -1;
-            for (uint64_t i = 0; parent_no_slash[i] != '\0'; i++) {
-                if (parent_no_slash[i] == '/') last = (int)i;
-            }
-            if (last >= 0) {
-                parent_no_slash[last] = '\0';
-            } else {
-                parent_no_slash[0] = '\0';
-            }
-        }
-
         char parent_abs[MAX_PATH];
-        if (parent_no_slash[0] == '\0') {
-            parent_abs[0] = '/';
-            parent_abs[1] = '\0';
-        } else {
-            uint64_t pn = cstr_len_u64(parent_no_slash);
-            if (pn + 2 > sizeof(parent_abs)) return (uint64_t)(-(int64_t)ENAMETOOLONG);
-            parent_abs[0] = '/';
-            for (uint64_t i = 0; i <= pn; i++) parent_abs[1 + i] = parent_no_slash[i];
+        {
+            int prc = abs_path_parent_dir(path, parent_abs, sizeof(parent_abs));
+            if (prc != 0) return (uint64_t)(int64_t)prc;
         }
 
         uint32_t pmode = 0;

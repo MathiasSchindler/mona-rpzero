@@ -1,5 +1,6 @@
 #include "sys_util.h"
 
+#include "errno.h"
 #include "mmu.h"
 
 int user_range_ok(uint64_t user_ptr, uint64_t len) {
@@ -121,6 +122,57 @@ int resolve_path(proc_t *p, const char *in, char *out, uint64_t outsz) {
     }
 
     return normalize_abs_path(tmp, out, outsz);
+}
+
+int abs_path_to_no_slash_trim(const char *abs_path, char *out_no_slash, uint64_t outsz) {
+    if (!abs_path || !out_no_slash || outsz == 0) return -(int)EINVAL;
+
+    const char *p = abs_path;
+    while (*p == '/') p++;
+    if (*p == '\0') {
+        if (outsz > 0) out_no_slash[0] = '\0';
+        return -(int)EINVAL;
+    }
+
+    uint64_t n = cstr_len_u64(p);
+    if (n + 1 > outsz) return -(int)ENAMETOOLONG;
+    for (uint64_t i = 0; i <= n; i++) out_no_slash[i] = p[i];
+
+    while (n > 0 && out_no_slash[n - 1] == '/') {
+        out_no_slash[n - 1] = '\0';
+        n--;
+    }
+    if (n == 0) return -(int)EINVAL;
+    return 0;
+}
+
+int abs_path_parent_dir(const char *abs_path, char *out_parent_abs, uint64_t outsz) {
+    if (!abs_path || !out_parent_abs || outsz < 2) return -(int)EINVAL;
+
+    uint64_t n = cstr_len_u64(abs_path);
+    if (n + 1 > outsz) return -(int)ENAMETOOLONG;
+    for (uint64_t i = 0; i <= n; i++) out_parent_abs[i] = abs_path[i];
+
+    /* Trim trailing slashes but keep "/" as-is. */
+    while (n > 1 && out_parent_abs[n - 1] == '/') {
+        out_parent_abs[n - 1] = '\0';
+        n--;
+    }
+
+    int last = -1;
+    for (uint64_t i = 0; out_parent_abs[i] != '\0'; i++) {
+        if (out_parent_abs[i] == '/') last = (int)i;
+    }
+    if (last < 0) return -(int)EINVAL;
+
+    if (last == 0) {
+        out_parent_abs[0] = '/';
+        out_parent_abs[1] = '\0';
+        return 0;
+    }
+
+    out_parent_abs[last] = '\0';
+    return 0;
 }
 
 int copy_cstr_from_user(char *dst, uint64_t dstsz, uint64_t user_ptr) {
