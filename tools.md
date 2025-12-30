@@ -23,7 +23,7 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 |---|---:|---:|
 | dmesg | Planned | 0 |
 | kinit | Done | 1 |
-| pstree | Planned | 0 |
+| pstree | Partial | 2 |
 | time | Planned | 0 |
 | awk | Planned | 0 |
 | ln | Planned | 0 |
@@ -49,7 +49,7 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | false | Done | 1 |
 | uncpio | Planned | 0 |
 | chmod | Planned | 0 |
-| find | Planned | 0 |
+| find | Partial | 5 |
 | mkdir | Partial | 3 |
 | sed | Planned | 0 |
 | uniq | Partial | 4 |

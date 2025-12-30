@@ -225,6 +225,30 @@ int main(int argc, char **argv, char **envp) {
         failed |= run_test("/bin/sh -c \"seq 1 10 | wc -l\"", "/bin/sh", test_argv);
     }
 
+    /* Tool smoke test: pstree (non-interactive, should exit 0). */
+    {
+        const char *const test_argv[] = {"pstree", "-p", 0};
+        failed |= run_test("/bin/pstree -p", "/bin/pstree", test_argv);
+    }
+
+    /* Tool smoke test: find (basic -name and depth). */
+    {
+        const char *const prep_argv[] = {"sh", "-c", "mkdir -p /tmp/fd; touch /tmp/fd/hi; mkdir -p /tmp/fd/sub; touch /tmp/fd/sub/lo", 0};
+        failed |= run_test("/bin/sh -c \"prepare find tree\"", "/bin/sh", prep_argv);
+
+        char out[512];
+        const char *const find_argv[] = {"find", "/tmp/fd", "-name", "hi", 0};
+        if (run_capture("/bin/find", find_argv, out, sizeof(out)) != 0) {
+            sys_puts("[kinit] find capture failed\n");
+            failed |= 1;
+        } else {
+            if (!mem_contains(out, cstr_len_u64_local(out), "/tmp/fd/hi")) {
+                sys_puts("[kinit] find output missing expected path\n");
+                failed |= 1;
+            }
+        }
+    }
+
     {
         const char *const test_argv[] = {"sh", "-c", "cd /home; pwd", 0};
         failed |= run_test("/bin/sh -c \"cd /home; pwd\"", "/bin/sh", test_argv);

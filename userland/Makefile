@@ -43,7 +43,7 @@ USER_BASE ?= 0x0000000000400000
 
 .PHONY: all clean check-toolchain check-nolibc initramfs
 
-all: check-nolibc $(BUILD)/echo.bin $(BUILD)/true.bin $(BUILD)/false.bin $(BUILD)/cat.bin $(BUILD)/ls.bin $(BUILD)/pwd.bin $(BUILD)/pid.bin $(BUILD)/uname.bin $(BUILD)/mkdir.bin $(BUILD)/touch.bin $(BUILD)/rm.bin $(BUILD)/rmdir.bin $(BUILD)/seq.bin $(BUILD)/uniq.bin $(BUILD)/wc.bin $(BUILD)/grep.bin $(BUILD)/ps.bin $(BUILD)/kill.bin $(BUILD)/brk.bin $(BUILD)/mmap.bin $(BUILD)/cwd.bin $(BUILD)/tty.bin $(BUILD)/sleep.bin $(BUILD)/compat.bin $(BUILD)/kinit.bin $(BUILD)/sh.bin $(BUILD)/init.bin
+all: check-nolibc $(BUILD)/echo.bin $(BUILD)/true.bin $(BUILD)/false.bin $(BUILD)/cat.bin $(BUILD)/ls.bin $(BUILD)/pwd.bin $(BUILD)/pid.bin $(BUILD)/uname.bin $(BUILD)/mkdir.bin $(BUILD)/touch.bin $(BUILD)/rm.bin $(BUILD)/rmdir.bin $(BUILD)/seq.bin $(BUILD)/uniq.bin $(BUILD)/wc.bin $(BUILD)/grep.bin $(BUILD)/ps.bin $(BUILD)/kill.bin $(BUILD)/pstree.bin $(BUILD)/find.bin $(BUILD)/brk.bin $(BUILD)/mmap.bin $(BUILD)/cwd.bin $(BUILD)/tty.bin $(BUILD)/sleep.bin $(BUILD)/compat.bin $(BUILD)/kinit.bin $(BUILD)/sh.bin $(BUILD)/init.bin
 
 initramfs: $(BUILD)/initramfs.cpio
 
@@ -131,6 +131,12 @@ $(BUILD)/ps.o: src/ps.c include/syscall.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/kill.o: src/kill.c include/syscall.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/pstree.o: src/pstree.c include/syscall.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/find.o: src/find.c include/syscall.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/brk.o: src/brk.c include/syscall.h | $(BUILD)
@@ -232,6 +238,14 @@ $(BUILD)/kill.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(B
 	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
 	$(POSTLINK)
 
+$(BUILD)/pstree.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/pstree.o | check-toolchain
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
+
+$(BUILD)/find.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/find.o | check-toolchain
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
+
 $(BUILD)/brk.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/brk.o | check-toolchain
 	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
 	$(POSTLINK)
@@ -322,6 +336,12 @@ $(BUILD)/ps.bin: $(BUILD)/ps.elf | check-toolchain
 $(BUILD)/kill.bin: $(BUILD)/kill.elf | check-toolchain
 	$(OBJCOPY) -O binary $< $@
 
+$(BUILD)/pstree.bin: $(BUILD)/pstree.elf | check-toolchain
+	$(OBJCOPY) -O binary $< $@
+
+$(BUILD)/find.bin: $(BUILD)/find.elf | check-toolchain
+	$(OBJCOPY) -O binary $< $@
+
 $(BUILD)/brk.bin: $(BUILD)/brk.elf | check-toolchain
 	$(OBJCOPY) -O binary $< $@
 
@@ -353,6 +373,8 @@ $(BUILD)/initramfs.cpio: $(TOOLS_DIR)/mkcpio_newc.py all | $(BUILD)
 	@rm -rf "$(INITRAMFS_ROOT)"
 	@mkdir -p "$(INITRAMFS_ROOT)/bin"
 	@cp -a "$(INITRAMFS_DIR)"/. "$(INITRAMFS_ROOT)"/
+	@# Drop host OS metadata files that may exist on macOS.
+	@/usr/bin/find "$(INITRAMFS_ROOT)" \( -name '.DS_Store' -o -name '._*' \) -type f -delete 2>/dev/null || true
 	@cp "$(BUILD)/echo.elf" "$(INITRAMFS_ROOT)/bin/echo"
 	@cp "$(BUILD)/true.elf" "$(INITRAMFS_ROOT)/bin/true"
 	@cp "$(BUILD)/false.elf" "$(INITRAMFS_ROOT)/bin/false"
@@ -371,6 +393,8 @@ $(BUILD)/initramfs.cpio: $(TOOLS_DIR)/mkcpio_newc.py all | $(BUILD)
 	@cp "$(BUILD)/grep.elf"  "$(INITRAMFS_ROOT)/bin/grep"
 	@cp "$(BUILD)/ps.elf"  "$(INITRAMFS_ROOT)/bin/ps"
 	@cp "$(BUILD)/kill.elf"  "$(INITRAMFS_ROOT)/bin/kill"
+	@cp "$(BUILD)/pstree.elf"  "$(INITRAMFS_ROOT)/bin/pstree"
+	@cp "$(BUILD)/find.elf"  "$(INITRAMFS_ROOT)/bin/find"
 	@cp "$(BUILD)/brk.elf"  "$(INITRAMFS_ROOT)/bin/brk"
 	@cp "$(BUILD)/mmap.elf"  "$(INITRAMFS_ROOT)/bin/mmap"
 	@cp "$(BUILD)/cwd.elf"  "$(INITRAMFS_ROOT)/bin/cwd"

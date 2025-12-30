@@ -9,6 +9,22 @@ static int is_space(char c);
 
 static void print_prompt(void);
 
+typedef struct {
+    unsigned long long d_ino;
+    long long d_off;
+    unsigned short d_reclen;
+    unsigned char d_type;
+    char d_name[];
+} linux_dirent64_t;
+
+static int str_eq(const char *a, const char *b);
+static int str_starts_with(const char *s, const char *pre);
+static int join_path(char *out, uint64_t cap, const char *dir, const char *name);
+static int is_dir_path(const char *path);
+static int find_token_start(const char *buf, int n);
+static int is_first_word_segment(const char *buf, int tok_start);
+static int do_tab_complete(char *buf, int *n_inout, int cap, int show_list);
+
 enum {
     LINE_MAX = 256,
     HIST_MAX = 16,
@@ -97,6 +113,345 @@ static int streq(const char *a, const char *b) {
     return *a == *b;
 }
 
+static int str_eq(const char *a, const char *b) {
+    while (*a && *b) {
+        if (*a != *b) return 0;
+        a++;
+        b++;
+    }
+    return *a == *b;
+}
+
+static int str_starts_with(const char *s, const char *pre) {
+    if (!s || !pre) return 0;
+    for (uint64_t i = 0; pre[i] != '\0'; i++) {
+        if (s[i] != pre[i]) return 0;
+    }
+    return 1;
+}
+
+static int join_path(char *out, uint64_t cap, const char *dir, const char *name) {
+    if (!out || cap == 0 || !dir || !name) return -1;
+    uint64_t dlen = cstr_len_u64_local(dir);
+    uint64_t nlen = cstr_len_u64_local(name);
+    if (dlen == 0) return -1;
+
+    int dir_is_root = (dlen == 1 && dir[0] == '/');
+    uint64_t need = dlen + (dir_is_root ? 0u : 1u) + nlen + 1u;
+    if (need > cap) return -1;
+
+    uint64_t o = 0;
+    for (uint64_t i = 0; i < dlen; i++) out[o++] = dir[i];
+    if (!dir_is_root) out[o++] = '/';
+    for (uint64_t i = 0; i < nlen; i++) out[o++] = name[i];
+    out[o] = '\0';
+    return 0;
+}
+
+static int is_dir_path(const char *path) {
+    linux_stat_t st;
+    long rc = (long)sys_newfstatat((uint64_t)-100, path, &st, 0);
+    if (rc < 0) return 0;
+    return ((st.st_mode & 0170000u) == 0040000u);
+}
+
+static int find_token_start(const char *buf, int n) {
+    if (!buf || n <= 0) return 0;
+    int i = n - 1;
+    while (i >= 0) {
+        char c = buf[i];
+        if (is_space(c) || c == '|' || c == ';') break;
+        i--;
+    }
+    return i + 1;
+}
+
+static int is_first_word_segment(const char *buf, int tok_start) {
+    if (!buf) return 1;
+    int j = tok_start - 1;
+    while (j >= 0 && is_space(buf[j])) j--;
+    if (j < 0) return 1;
+    if (buf[j] == '|' || buf[j] == ';') return 1;
+    return 0;
+}
+
+static void print_candidates(const char names[][64], int count) {
+    sys_puts("\n");
+    for (int i = 0; i < count; i++) {
+        sys_puts(names[i]);
+        sys_puts("\n");
+    }
+}
+
+static int is_builtin_name(const char *s) {
+    if (!s) return 0;
+    static const char *builtins[] = {"help", "exit", "cd", "shutdown", "poweroff", 0};
+    for (int i = 0; builtins[i]; i++) {
+        if (str_eq(s, builtins[i])) return 1;
+    }
+    return 0;
+}
+
+static int do_tab_complete(char *buf, int *n_inout, int cap, int show_list) {
+    enum {
+        MAX_CANDS = 64,
+        NAME_MAX = 64,
+    };
+
+    if (!buf || !n_inout || cap <= 0) return 0;
+    int n = *n_inout;
+    if (n < 0) n = 0;
+
+    int tok_start = find_token_start(buf, n);
+    if (tok_start < 0) tok_start = 0;
+    if (tok_start > n) tok_start = n;
+
+    char token[128];
+    int tok_len = n - tok_start;
+    if (tok_len < 0) tok_len = 0;
+    if (tok_len + 1 > (int)sizeof(token)) tok_len = (int)sizeof(token) - 1;
+    for (int i = 0; i < tok_len; i++) token[i] = buf[tok_start + i];
+    token[tok_len] = '\0';
+
+    /* Determine completion domain. */
+    int has_slash = 0;
+    for (int i = 0; token[i] != '\0'; i++) {
+        if (token[i] == '/') {
+            has_slash = 1;
+            break;
+        }
+    }
+
+    char dir[256];
+    char prefix[128];
+    dir[0] = '\0';
+    prefix[0] = '\0';
+
+    if (has_slash) {
+        int last = -1;
+        for (int i = 0; token[i] != '\0'; i++) {
+            if (token[i] == '/') last = i;
+        }
+
+        if (last == 0) {
+            dir[0] = '/';
+            dir[1] = '\0';
+        } else if (last > 0) {
+            int dl = last;
+            if (dl + 1 > (int)sizeof(dir)) dl = (int)sizeof(dir) - 1;
+            for (int i = 0; i < dl; i++) dir[i] = token[i];
+            dir[dl] = '\0';
+        } else {
+            dir[0] = '/';
+            dir[1] = '\0';
+        }
+
+        int pl = 0;
+        for (int i = last + 1; token[i] != '\0' && pl + 1 < (int)sizeof(prefix); i++) {
+            prefix[pl++] = token[i];
+        }
+        prefix[pl] = '\0';
+    } else {
+        int first = is_first_word_segment(buf, tok_start);
+        if (first) {
+            /* Command completion: builtins + /bin. */
+            dir[0] = '\0';
+            int pl = 0;
+            for (int i = 0; token[i] != '\0' && pl + 1 < (int)sizeof(prefix); i++) prefix[pl++] = token[i];
+            prefix[pl] = '\0';
+        } else {
+            /* Filename completion: current working directory. */
+            uint64_t rc = sys_getcwd(dir, sizeof(dir));
+            if ((int64_t)rc < 0) {
+                dir[0] = '/';
+                dir[1] = '\0';
+            }
+            int pl = 0;
+            for (int i = 0; token[i] != '\0' && pl + 1 < (int)sizeof(prefix); i++) prefix[pl++] = token[i];
+            prefix[pl] = '\0';
+        }
+    }
+
+    char cands[MAX_CANDS][NAME_MAX];
+    int cand_count = 0;
+
+    int cmd_pos = (!has_slash && is_first_word_segment(buf, tok_start));
+    const char *base_dir = 0;
+    if (has_slash) {
+        base_dir = dir;
+    } else {
+        base_dir = cmd_pos ? "/bin" : dir;
+    }
+
+    int want_hidden = (prefix[0] == '.');
+
+    /* Builtins for command position. */
+    if (cmd_pos) {
+        static const char *builtins[] = {"help", "exit", "cd", "shutdown", "poweroff", 0};
+        for (int i = 0; builtins[i]; i++) {
+            if (!str_starts_with(builtins[i], prefix)) continue;
+            if (cand_count >= MAX_CANDS) break;
+            int k = 0;
+            while (builtins[i][k] && k + 1 < NAME_MAX) {
+                cands[cand_count][k] = builtins[i][k];
+                k++;
+            }
+            cands[cand_count][k] = '\0';
+            cand_count++;
+        }
+    }
+
+    /* Directory listing candidates */
+    {
+        long fd = (long)sys_openat((uint64_t)-100, base_dir, 0, 0);
+        if (fd >= 0) {
+            char dbuf[512];
+            for (;;) {
+                long dn = (long)sys_getdents64((uint64_t)fd, dbuf, sizeof(dbuf));
+                if (dn < 0) break;
+                if (dn == 0) break;
+
+                unsigned long off = 0;
+                while (off < (unsigned long)dn) {
+                    linux_dirent64_t *d = (linux_dirent64_t *)(dbuf + off);
+                    if (d->d_reclen == 0) break;
+
+                    const char *name = d->d_name;
+                    if (!want_hidden && name[0] == '.') {
+                        off += d->d_reclen;
+                        continue;
+                    }
+                    if (str_eq(name, ".") || str_eq(name, "..")) {
+                        off += d->d_reclen;
+                        continue;
+                    }
+                    if (!str_starts_with(name, prefix)) {
+                        off += d->d_reclen;
+                        continue;
+                    }
+
+                    /* Avoid duplicates (builtins vs /bin). */
+                    int dup = 0;
+                    for (int i = 0; i < cand_count; i++) {
+                        if (str_eq(cands[i], name)) {
+                            dup = 1;
+                            break;
+                        }
+                    }
+                    if (!dup && cand_count < MAX_CANDS) {
+                        int k = 0;
+                        while (name[k] && k + 1 < NAME_MAX) {
+                            cands[cand_count][k] = name[k];
+                            k++;
+                        }
+                        cands[cand_count][k] = '\0';
+                        cand_count++;
+                    }
+
+                    off += d->d_reclen;
+                }
+            }
+            (void)sys_close((uint64_t)fd);
+        }
+    }
+
+    if (cand_count == 0) {
+        return 0;
+    }
+
+    /* Compute longest common prefix among candidates. */
+    uint64_t lcp = cstr_len_u64_local(cands[0]);
+    for (int i = 1; i < cand_count; i++) {
+        uint64_t j = 0;
+        while (j < lcp && cands[0][j] && cands[i][j] && cands[0][j] == cands[i][j]) {
+            j++;
+        }
+        lcp = j;
+    }
+
+    uint64_t pre_len = cstr_len_u64_local(prefix);
+    uint64_t extend = (lcp > pre_len) ? (lcp - pre_len) : 0;
+
+    if (extend > 0) {
+        /* Append the extension characters into the current line buffer. */
+        uint64_t inserted = 0;
+        for (uint64_t i = 0; i < extend; i++) {
+            if (n + 1 >= cap) break;
+            char ch = cands[0][pre_len + i];
+            buf[n++] = ch;
+            tty_putc(ch);
+            inserted++;
+        }
+        buf[n] = '\0';
+        *n_inout = n;
+
+        /* If this completion resolved to a unique full match, append '/' for dirs or space otherwise. */
+        if (cand_count == 1 && inserted == extend) {
+            int is_dir = 0;
+            if (!(cmd_pos && is_builtin_name(cands[0]))) {
+                char full[512];
+                if (join_path(full, sizeof(full), base_dir, cands[0]) == 0 && is_dir_path(full)) {
+                    is_dir = 1;
+                }
+            }
+
+            if (is_dir) {
+                if (n + 1 < cap && (n == 0 || buf[n - 1] != '/')) {
+                    buf[n++] = '/';
+                    tty_putc('/');
+                    buf[n] = '\0';
+                    *n_inout = n;
+                }
+            } else {
+                if (n + 1 < cap && (n == 0 || buf[n - 1] != ' ')) {
+                    buf[n++] = ' ';
+                    tty_putc(' ');
+                    buf[n] = '\0';
+                    *n_inout = n;
+                }
+            }
+            return 0;
+        }
+
+        return 1;
+    }
+
+    if (cand_count == 1) {
+        /* Full match already typed; add '/' for dirs or space after completion. */
+        int is_dir = 0;
+        if (!(cmd_pos && is_builtin_name(cands[0]))) {
+            char full[512];
+            if (join_path(full, sizeof(full), base_dir, cands[0]) == 0 && is_dir_path(full)) {
+                is_dir = 1;
+            }
+        }
+
+        if (is_dir) {
+            if (n + 1 < cap && (n == 0 || buf[n - 1] != '/')) {
+                buf[n++] = '/';
+                tty_putc('/');
+                buf[n] = '\0';
+            }
+        } else {
+            if (n + 1 < cap && (n == 0 || buf[n - 1] != ' ')) {
+                buf[n++] = ' ';
+                tty_putc(' ');
+                buf[n] = '\0';
+            }
+        }
+        *n_inout = n;
+        return 0;
+    }
+
+    if (show_list) {
+        print_candidates(cands, cand_count);
+        print_prompt();
+        (void)sys_write(1, buf, (uint64_t)n);
+    }
+
+    return 1;
+}
+
 static int read_line(char *buf, int cap) {
     int n = 0;
 
@@ -104,6 +459,9 @@ static int read_line(char *buf, int cap) {
     int hist_pos = 0; /* 0 = not browsing; 1 = newest; 2 = one older; ... */
     char saved[LINE_MAX];
     saved[0] = '\0';
+
+    /* TAB completion state: first TAB extends common prefix, second TAB lists candidates. */
+    int tab_pending = 0;
 
     while (n + 1 < cap) {
         char c = 0;
@@ -117,6 +475,14 @@ static int read_line(char *buf, int cap) {
             buf[n] = '\0';
             sys_puts("\n");
             return n;
+        }
+
+        if (c == '\t') {
+            int ambiguous = do_tab_complete(buf, &n, cap, tab_pending);
+            tab_pending = ambiguous ? 1 : 0;
+            /* Any completion action cancels history browsing. */
+            hist_pos = 0;
+            continue;
         }
 
         /* Arrow keys: typically ESC [ A/B. */
@@ -150,6 +516,7 @@ static int read_line(char *buf, int cap) {
                 buf[hn] = '\0';
                 n = (int)hn;
                 (void)sys_write(1, buf, (uint64_t)n);
+                tab_pending = 0;
                 continue;
             }
 
@@ -173,6 +540,7 @@ static int read_line(char *buf, int cap) {
                 buf[hn] = '\0';
                 n = (int)hn;
                 (void)sys_write(1, buf, (uint64_t)n);
+                tab_pending = 0;
                 continue;
             }
 
@@ -187,6 +555,7 @@ static int read_line(char *buf, int cap) {
             }
             /* Editing cancels history browsing. */
             hist_pos = 0;
+            tab_pending = 0;
             continue;
         }
 
@@ -194,6 +563,7 @@ static int read_line(char *buf, int cap) {
         (void)sys_write(1, &c, 1);
         /* Editing cancels history browsing. */
         hist_pos = 0;
+        tab_pending = 0;
     }
 
     buf[n] = '\0';
