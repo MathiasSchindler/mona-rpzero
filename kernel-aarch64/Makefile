@@ -18,7 +18,7 @@ USERPROG ?= init
 CFLAGS := -O2 -g -ffreestanding -nostdlib -nostartfiles \
 	-fno-stack-protector -fno-pic -fno-plt -fno-asynchronous-unwind-tables \
 	-mgeneral-regs-only -mstrict-align \
-	-Iinclude -Wall -Wextra -Wno-unused-parameter
+	-Iinclude -I../abi -Wall -Wextra -Wno-unused-parameter
 
 # Optional extra defines/flags (e.g. -DQEMU_SEMIHOSTING)
 KERNEL_DEFS ?=

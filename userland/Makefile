@@ -15,7 +15,7 @@ CFLAGS := -O2 -g -ffreestanding -nostdlib -nostartfiles \
 	-std=c11 -fno-builtin -fno-stack-protector -fno-pic -fno-plt -fno-asynchronous-unwind-tables \
 	-ffunction-sections -fdata-sections \
 	-mgeneral-regs-only -mstrict-align \
-	-Iinclude -Wall -Wextra -Wno-unused-parameter \
+	-Iinclude -I../abi -Wall -Wextra -Wno-unused-parameter \
 	-Werror=implicit-function-declaration -Werror=implicit-int
 
 LDFLAGS := --gc-sections -z max-page-size=4096 -z common-page-size=4096

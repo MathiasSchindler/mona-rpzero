@@ -23,20 +23,6 @@ This document is an actionable work plan for this repo’s **bare-metal AArch64 
 ## Priority 0 (P0): Correctness + cleanup that prevents future bugs
 
 These items reduce duplication and semantic drift. They are low-risk and increase confidence.
-
-### P0.3 Reduce syscall-number drift between kernel and userland
-
-**Why**: syscall numbers are duplicated in `kernel-aarch64/exceptions.c` and `userland/include/syscall.h`.
-
-**Implementation options (pick one)**:
-1) **Single shared header** (preferred)
-   - Create `abi/syscall_numbers.h` at repo root.
-   - Include it from both kernel and userland.
-2) **Generator** (still “no dependencies”): a tiny Python script to generate headers for kernel/userland.
-
-**Acceptance**:
-- `make test`.
-
 ---
 
 ## Priority 1 (P1): Compatibility improvements (high ROI)
@@ -162,10 +148,10 @@ This is about shrinking the QEMU→hardware gap with measurable steps.
 
 ## Suggested next 1–2 PRs
 
-1) **P0.1 + P0.2** (path helpers + mode constants)
-   - Small diff, big long-term payoff.
-2) **P1.1** (symlink errno + execve follow)
-   - Improves compatibility and reduces surprises.
+1) **P1.1** (symlink errno + execve follow)
+  - Improves compatibility and reduces surprises.
+2) **P2.1** (`ls` usability improvements)
+  - High ROI for interactive development.
 
 ---
 
@@ -173,3 +159,4 @@ This is about shrinking the QEMU→hardware gap with measurable steps.
 
 - 2025-12-30: Unify path/parent parsing via `abs_path_to_no_slash_trim()` and `abs_path_parent_dir()` in [kernel-aarch64/sys_util.c](kernel-aarch64/sys_util.c) and [kernel-aarch64/include/sys_util.h](kernel-aarch64/include/sys_util.h).
 - 2025-12-30: Centralize file type/mode bits in [kernel-aarch64/include/stat_bits.h](kernel-aarch64/include/stat_bits.h) and update callers.
+- 2025-12-30: Consolidate syscall numbers into [abi/syscall_numbers.h](abi/syscall_numbers.h) and include it from both kernel and userland to prevent drift.
