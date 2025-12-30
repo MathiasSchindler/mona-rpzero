@@ -25,7 +25,7 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | kinit | Done | 1 |
 | pstree | Partial | 2 |
 | time | Planned | 0 |
-| awk | Planned | 0 |
+| awk | Partial | 3 |
 | ln | Planned | 0 |
 | pwd | Partial | 1 |
 | basename | Planned | 0 |
@@ -57,7 +57,7 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | free | Planned | 0 |
 | more | Planned | 0 |
 | seq | Partial | 3 |
-| uptime | Done | 1 |
+| uptime | Done | 2 |
 | mount | Planned | 0 |
 | sh | Partial | 4 |
 | watch | Planned | 0 |
@@ -67,7 +67,7 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | wc | Partial | 4 |
 | cmp | Planned | 0 |
 | grep | Partial | 7 |
-| sleep | Done | 1 |
+| sleep | Done | 2 |
 | wget6 | Planned | 0 |
 | col | Planned | 0 |
 | gunzip | Planned | 0 |
@@ -114,8 +114,9 @@ Notes on current “Partial” implementations:
 - `ls`: lists `/` only; no args/flags.
 - `echo`: prints argv separated by spaces; no flags.
 - `cat`: supports stdin→stdout and a single file argument.
+- `awk`: supports `/TEXT/ {print ...}` substring match, `-F` single-char separator, and printing `$N`, `NR`, `NF`.
 - `uname`: prints `sysname release machine`; no flags.
-- `sleep`: accepts `SECONDS` and calls `nanosleep`.
+- `sleep`: accepts `SECONDS[.FRACTION]` and calls `nanosleep`.
 - `sh`: supports interactive mode, `-c`, and a single `cmd1 | cmd2` pipeline.
 - `init`: system init that starts `/bin/sh`.
 - `kinit`: selftest runner for `make test`.
@@ -123,6 +124,7 @@ Notes on current “Partial” implementations:
 Time notes:
 
 - `uptime` prints time since boot using `CLOCK_MONOTONIC`.
+- `uptime` prints both `HH:MM:SS` and raw seconds.
 - `date` prints a boot-relative “realtime” based on `CLOCK_REALTIME` (currently the kernel returns the same clock as monotonic; no RTC/NTP yet).
 
 ## Extra repo utilities (not in monacc list)

@@ -21,6 +21,11 @@ static void put_u64_dec(uint64_t v) {
     }
 }
 
+static void put_u64_dec_pad2(uint64_t v) {
+    putc1((char)('0' + (char)((v / 10u) % 10u)));
+    putc1((char)('0' + (char)(v % 10u)));
+}
+
 static void put_u64_dec_pad(uint64_t v, uint64_t width) {
     char tmp[32];
     uint64_t t = 0;
@@ -57,11 +62,21 @@ int main(int argc, char **argv, char **envp) {
     uint64_t sec = (uint64_t)ts.tv_sec;
     uint64_t nsec = (uint64_t)ts.tv_nsec;
 
-    /* Print "up <sec>.<millis>". */
+    /* Print "up HH:MM:SS (<sec>.<millis>s)". */
+    uint64_t hh = sec / 3600ull;
+    uint64_t mm = (sec / 60ull) % 60ull;
+    uint64_t ss = sec % 60ull;
+
     sys_puts("up ");
+    put_u64_dec(hh);
+    putc1(':');
+    put_u64_dec_pad2(mm);
+    putc1(':');
+    put_u64_dec_pad2(ss);
+    sys_puts(" (");
     put_u64_dec(sec);
     putc1('.');
     put_u64_dec_pad(nsec / 1000000ull, 3);
-    sys_puts("\n");
+    sys_puts("s)\n");
     return 0;
 }

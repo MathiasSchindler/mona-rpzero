@@ -225,6 +225,28 @@ int main(int argc, char **argv, char **envp) {
         failed |= run_test("/bin/grep y /uniq.txt", "/bin/grep", test_argv);
     }
 
+    /* Tool smoke test: awk field printing + pattern filter. */
+    {
+        char out[512];
+        const char *const awk_argv1[] = {"awk", "{print $1}", "/uniq.txt", 0};
+        if (run_capture("/bin/awk", awk_argv1, out, sizeof(out)) != 0) {
+            sys_puts("[kinit] awk capture failed\n");
+            failed |= 1;
+        } else if (!mem_contains(out, cstr_len_u64_local(out), "x")) {
+            sys_puts("[kinit] awk output missing expected field\n");
+            failed |= 1;
+        }
+
+        const char *const awk_argv2[] = {"awk", "/y/ {print $1}", "/uniq.txt", 0};
+        if (run_capture("/bin/awk", awk_argv2, out, sizeof(out)) != 0) {
+            sys_puts("[kinit] awk(pattern) capture failed\n");
+            failed |= 1;
+        } else if (!mem_contains(out, cstr_len_u64_local(out), "y")) {
+            sys_puts("[kinit] awk(pattern) output missing expected match\n");
+            failed |= 1;
+        }
+    }
+
     /* Tool smoke test: pipeline into wc. */
     {
         const char *const test_argv[] = {"sh", "-c", "seq 1 10 | wc -l", 0};
@@ -341,6 +363,25 @@ int main(int argc, char **argv, char **envp) {
                 uint64_t dt = ts_to_ns_clamp(t1) - ts_to_ns_clamp(t0);
                 if (dt < 900000000ull) {
                     sys_puts("[kinit] sleep returned too early\n");
+                    failed |= 1;
+                }
+            }
+        }
+
+        sys_puts("[kinit] selftest: /bin/sleep 0.2 duration\n");
+        if ((int64_t)sys_clock_gettime(1, &t0) < 0) {
+            sys_puts("[kinit] clock_gettime failed before sleep 0.2\n");
+            failed |= 1;
+        } else {
+            const char *const sleep_argv[] = {"sleep", "0.2", 0};
+            failed |= run_test("/bin/sleep 0.2", "/bin/sleep", sleep_argv);
+            if ((int64_t)sys_clock_gettime(1, &t1) < 0) {
+                sys_puts("[kinit] clock_gettime failed after sleep 0.2\n");
+                failed |= 1;
+            } else {
+                uint64_t dt = ts_to_ns_clamp(t1) - ts_to_ns_clamp(t0);
+                if (dt < 150000000ull) {
+                    sys_puts("[kinit] sleep 0.2 returned too early\n");
                     failed |= 1;
                 }
             }
