@@ -14,6 +14,12 @@ void pmm_init(uint64_t mem_base, uint64_t mem_size, uint64_t kernel_start, uint6
 uint64_t pmm_alloc_page(void);          /* returns physical address, 0 on OOM */
 void pmm_free_page(uint64_t pa);
 
+/*
+ * Reserve a physical address range so the allocator won't hand it out.
+ * Safe to call after pmm_init(); ignored if PMM is uninitialized.
+ */
+void pmm_reserve_range(uint64_t start, uint64_t end);
+
 /* Allocate a 2MiB-aligned contiguous physical region (512 * 4KiB pages).
  * Returns base physical address, or 0 on OOM.
  */

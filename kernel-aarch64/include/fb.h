@@ -7,6 +7,7 @@ typedef struct fb_info {
     uint32_t height;
     uint32_t pitch;
     uint32_t bpp;
+    uint32_t size_bytes;
     uint64_t phys_addr;
     void *virt;
 } fb_info_t;

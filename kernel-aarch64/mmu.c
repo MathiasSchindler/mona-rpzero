@@ -51,6 +51,9 @@
 
 static uint64_t *g_l2_template = 0;
 
+static inline uint64_t align_down(uint64_t v, uint64_t a);
+static inline uint64_t align_up(uint64_t v, uint64_t a);
+
 static uint64_t *alloc_table_page(void);
 static uint64_t make_table_desc(uint64_t next_table_pa);
 static uint64_t make_block_desc(uint64_t out_pa, int attr_index, uint64_t ap, int is_device);
@@ -97,6 +100,37 @@ static inline void tlbi_vmalle1(void) {
     __asm__ volatile("tlbi vmalle1");
     __asm__ volatile("dsb ish");
     __asm__ volatile("isb");
+}
+
+int mmu_mark_region_device(uint64_t phys_start, uint64_t size_bytes) {
+    if (!mmu_is_enabled()) {
+        return -1;
+    }
+    if (!g_l2_template) {
+        return -1;
+    }
+    if (size_bytes == 0) {
+        return -1;
+    }
+
+    /* We only have L2 entries for VA/PA 0..1GiB in 2MiB blocks. */
+    uint64_t start = align_down(phys_start, 0x200000ull);
+    uint64_t end = align_up(phys_start + size_bytes, 0x200000ull);
+    if (end <= start) {
+        return -1;
+    }
+
+    __asm__ volatile("dsb ish");
+    for (uint64_t pa = start; pa < end; pa += 0x200000ull) {
+        uint64_t idx = pa / 0x200000ull;
+        if (idx >= TABLE_ENTRIES) {
+            return -1;
+        }
+        g_l2_template[idx] = make_block_desc(pa, ATTR_DEVICE, PTE_AP_RW_EL1, /*is_device=*/1);
+    }
+
+    tlbi_vmalle1();
+    return 0;
 }
 
 uint64_t mmu_ttbr0_read(void) {

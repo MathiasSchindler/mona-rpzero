@@ -94,6 +94,13 @@ static void reserve_range(uint64_t start, uint64_t end) {
     }
 }
 
+void pmm_reserve_range(uint64_t start, uint64_t end) {
+    if (g_info.total_pages == 0) {
+        return;
+    }
+    reserve_range(start, end);
+}
+
 void pmm_init(uint64_t mem_base, uint64_t mem_size, uint64_t kernel_start, uint64_t kernel_end, uint64_t dtb_ptr) {
     /* Basic sanity */
     if (mem_size < PMM_PAGE_SIZE * 16) {

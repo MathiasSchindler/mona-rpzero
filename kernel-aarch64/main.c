@@ -7,6 +7,17 @@
 #include "initramfs.h"
 #include "time.h"
 #include "fb.h"
+#include "termfb.h"
+
+#ifndef FB_REQ_W
+#define FB_REQ_W 1920u
+#endif
+#ifndef FB_REQ_H
+#define FB_REQ_H 1080u
+#endif
+#ifndef FB_REQ_BPP
+#define FB_REQ_BPP 32u
+#endif
 
 extern unsigned char __kernel_start[];
 extern unsigned char __kernel_end[];
@@ -48,8 +59,18 @@ void kmain(unsigned long dtb_ptr) {
 
     #ifdef ENABLE_FB
         /* Best-effort framebuffer bring-up (QEMU-first). */
-        if (fb_init_from_mailbox(1920, 1080, 32) == 0) {
-            fb_fill(0x00203040u);
+        if (fb_init_from_mailbox(FB_REQ_W, FB_REQ_H, FB_REQ_BPP) == 0) {
+            /* Bring up a very small framebuffer console for early gfx testing. */
+            (void)termfb_init(0x00ffffffu, 0x00203040u);
+            termfb_write("mona-rpzero framebuffer console\n");
+
+            const fb_info_t *fb = fb_get_info();
+            termfb_write("fb: w="); termfb_write_hex_u64(fb->width);
+            termfb_write(" h="); termfb_write_hex_u64(fb->height);
+            termfb_write(" bpp="); termfb_write_hex_u64(fb->bpp);
+            termfb_write(" pitch="); termfb_write_hex_u64(fb->pitch);
+            termfb_write("\n");
+            termfb_write("(UART still active)\n\n");
         }
     #endif
 

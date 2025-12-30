@@ -23,6 +23,14 @@ uint64_t mmu_ttbr0_read(void);
 void mmu_ttbr0_write(uint64_t ttbr0_pa);
 uint64_t mmu_ttbr0_create_with_user_pa(uint64_t user_pa_base);
 
+/*
+ * Mark a physical range as device memory in the shared identity mapping.
+ *
+ * The current MMU setup uses 2MiB block mappings; this helper rounds the range
+ * to 2MiB and updates the corresponding block descriptors, then flushes TLBs.
+ */
+int mmu_mark_region_device(uint64_t phys_start, uint64_t size_bytes);
+
 /* For 39-bit VA, the upper canonical half begins at 0xFFFFFFC000000000. */
 #define KERNEL_VA_BASE 0xFFFFFFC000000000ull
 

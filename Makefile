@@ -24,6 +24,14 @@ DTB ?= $(firstword $(wildcard $(DTB_CANDIDATES)))
 # QEMU raspi3b currently requires exactly 1 GiB RAM.
 MEM ?= 1024
 
+# Framebuffer request (used by `make run-gfx`).
+FB_W ?= 1920
+FB_H ?= 1080
+FB_BPP ?= 32
+
+# QEMU display backend for graphics runs (macOS default: cocoa).
+QEMU_DISPLAY ?= cocoa
+
 # Optional: which userland tool to embed as the EL0 payload.
 USERPROG ?= init
 
@@ -71,8 +79,9 @@ run-gfx: userland
 		echo "Tried: $(DTB_CANDIDATES)" >&2; \
 		exit 2; \
 	fi
-	@$(MAKE) -C "$(AARCH64_DIR)" CROSS="$(AARCH64_CROSS)" USERPROG="$(USERPROG)" KERNEL_DEFS="-DQEMU_SEMIHOSTING -DENABLE_FB" all
-	@set +e; bash tools/run-qemu-raspi3b.sh --gfx --kernel "$(AARCH64_IMG)" --dtb "$(DTB)" --mem "$(MEM)"; rc=$$?; if [[ $$rc -eq 0 || $$rc -eq 128 ]]; then exit 0; fi; exit $$rc
+	@$(MAKE) -C "$(AARCH64_DIR)" CROSS="$(AARCH64_CROSS)" USERPROG="$(USERPROG)" \
+		KERNEL_DEFS="-DQEMU_SEMIHOSTING -DENABLE_FB -DFB_REQ_W=$(FB_W) -DFB_REQ_H=$(FB_H) -DFB_REQ_BPP=$(FB_BPP)" all
+	@set +e; bash tools/run-qemu-raspi3b.sh --gfx --display "$(QEMU_DISPLAY)" --kernel "$(AARCH64_IMG)" --dtb "$(DTB)" --mem "$(MEM)"; rc=$$?; if [[ $$rc -eq 0 || $$rc -eq 128 ]]; then exit 0; fi; exit $$rc
 
 test:
 	@$(MAKE) USERPROG=kinit test-aarch64

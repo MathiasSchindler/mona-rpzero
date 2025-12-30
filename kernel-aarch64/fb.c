@@ -1,6 +1,8 @@
 #include "fb.h"
 
 #include "mailbox.h"
+#include "mmu.h"
+#include "pmm.h"
 #include "uart_pl011.h"
 
 #define FB_TAG_SET_PHYS_WH   0x00048003u
@@ -38,6 +40,7 @@ int fb_init_from_mailbox(uint32_t req_w, uint32_t req_h, uint32_t req_bpp) {
     uint32_t i = 2;
 
     /* Set physical width/height */
+    uint32_t phys_wh_tag_idx = i;
     msg[i++] = FB_TAG_SET_PHYS_WH;
     msg[i++] = 8;
     msg[i++] = 0;
@@ -45,6 +48,7 @@ int fb_init_from_mailbox(uint32_t req_w, uint32_t req_h, uint32_t req_bpp) {
     msg[i++] = req_h;
 
     /* Set virtual width/height */
+    uint32_t virt_wh_tag_idx = i;
     msg[i++] = FB_TAG_SET_VIRT_WH;
     msg[i++] = 8;
     msg[i++] = 0;
@@ -52,6 +56,7 @@ int fb_init_from_mailbox(uint32_t req_w, uint32_t req_h, uint32_t req_bpp) {
     msg[i++] = req_h;
 
     /* Set depth */
+    uint32_t depth_tag_idx = i;
     msg[i++] = FB_TAG_SET_DEPTH;
     msg[i++] = 4;
     msg[i++] = 0;
@@ -68,7 +73,7 @@ int fb_init_from_mailbox(uint32_t req_w, uint32_t req_h, uint32_t req_bpp) {
     msg[i++] = FB_TAG_ALLOC_BUFFER;
     msg[i++] = 8;
     msg[i++] = 0;
-    msg[i++] = 16; /* alignment */
+    msg[i++] = 0x200000u; /* 2MiB alignment (matches our coarse MMU blocks) */
     msg[i++] = 0;  /* will be overwritten with size */
 
     /* Get pitch */
@@ -90,28 +95,51 @@ int fb_init_from_mailbox(uint32_t req_w, uint32_t req_h, uint32_t req_bpp) {
     }
 
     /* Parse responses. Offsets are fixed by construction above. */
+    uint32_t phys_w = msg[phys_wh_tag_idx + 3];
+    uint32_t phys_h = msg[phys_wh_tag_idx + 4];
+    uint32_t virt_w = msg[virt_wh_tag_idx + 3];
+    uint32_t virt_h = msg[virt_wh_tag_idx + 4];
+    uint32_t depth = msg[depth_tag_idx + 3];
+
     uint32_t bus_addr = msg[alloc_tag_idx + 3];
     uint32_t fb_size = msg[alloc_tag_idx + 4];
     uint32_t pitch = msg[pitch_tag_idx + 3];
 
-    if (bus_addr == 0 || fb_size == 0 || pitch == 0) {
+    if (virt_w == 0 || virt_h == 0 || depth == 0 || bus_addr == 0 || fb_size == 0 || pitch == 0) {
         uart_write("fb: invalid response addr/size/pitch\n");
+        uart_write("fb: phys="); uart_write_hex_u64(phys_w); uart_write("x"); uart_write_hex_u64(phys_h); uart_write("\n");
+        uart_write("fb: virt="); uart_write_hex_u64(virt_w); uart_write("x"); uart_write_hex_u64(virt_h); uart_write("\n");
+        uart_write("fb: depth="); uart_write_hex_u64(depth); uart_write("\n");
         uart_write("fb: bus_addr="); uart_write_hex_u64(bus_addr); uart_write("\n");
         uart_write("fb: fb_size="); uart_write_hex_u64(fb_size); uart_write("\n");
         uart_write("fb: pitch="); uart_write_hex_u64(pitch); uart_write("\n");
         return -1;
     }
 
-    g_fb.width = req_w;
-    g_fb.height = req_h;
-    g_fb.bpp = req_bpp;
+    /* Use the values returned by firmware/QEMU (it may clamp/adjust). */
+    (void)phys_w;
+    (void)phys_h;
+    g_fb.width = virt_w;
+    g_fb.height = virt_h;
+    g_fb.bpp = depth;
     g_fb.pitch = pitch;
+    g_fb.size_bytes = fb_size;
     g_fb.phys_addr = (uint64_t)rpi_bus_to_phys_u32(bus_addr);
-    g_fb.virt = (void *)(uintptr_t)g_fb.phys_addr; /* identity-mapped initially */
 
-    uart_write("fb: initialized ");
+    /* Prevent the allocator from handing out framebuffer RAM. */
+    pmm_reserve_range(g_fb.phys_addr, g_fb.phys_addr + (uint64_t)g_fb.size_bytes);
+
+    /* Map framebuffer as device (non-cacheable) to avoid cache coherency issues initially. */
+    if (mmu_mark_region_device(g_fb.phys_addr, (uint64_t)g_fb.size_bytes) != 0) {
+        uart_write("fb: warning: failed to mark fb region as device\n");
+    }
+
+    /* Access via higher-half mapping (same shared L2 table). */
+    g_fb.virt = (void *)(uintptr_t)(KERNEL_VA_BASE + g_fb.phys_addr);
+
+    uart_write("fb: initialized w=");
     uart_write_hex_u64(g_fb.width);
-    uart_write("x");
+    uart_write(" h=");
     uart_write_hex_u64(g_fb.height);
     uart_write(" bpp=");
     uart_write_hex_u64(g_fb.bpp);
@@ -119,6 +147,8 @@ int fb_init_from_mailbox(uint32_t req_w, uint32_t req_h, uint32_t req_bpp) {
     uart_write_hex_u64(g_fb.pitch);
     uart_write(" addr=");
     uart_write_hex_u64(g_fb.phys_addr);
+    uart_write(" size=");
+    uart_write_hex_u64(g_fb.size_bytes);
     uart_write("\n");
 
     return 0;
