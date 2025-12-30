@@ -147,7 +147,7 @@ int vfs_lookup_abs(const char *abs_path, const uint8_t **out_data, uint64_t *out
 typedef struct {
     initramfs_dir_cb_t cb;
     void *cb_ctx;
-    const char *seen[128];
+    char seen[128][128];
     uint32_t seen_len[128];
     uint32_t seen_count;
 } vfs_list_ctx_t;
@@ -169,8 +169,11 @@ static int vfs_seen_has(vfs_list_ctx_t *vc, const char *name, uint32_t len) {
 
 static void vfs_seen_add(vfs_list_ctx_t *vc, const char *name, uint32_t len) {
     if (vc->seen_count >= (uint32_t)(sizeof(vc->seen) / sizeof(vc->seen[0]))) return;
-    vc->seen[vc->seen_count] = name;
-    vc->seen_len[vc->seen_count] = len;
+    uint32_t n = len;
+    if (n >= (uint32_t)sizeof(vc->seen[0])) n = (uint32_t)sizeof(vc->seen[0]) - 1;
+    for (uint32_t i = 0; i < n; i++) vc->seen[vc->seen_count][i] = name[i];
+    vc->seen[vc->seen_count][n] = '\0';
+    vc->seen_len[vc->seen_count] = n;
     vc->seen_count++;
 }
 

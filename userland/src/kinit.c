@@ -249,6 +249,21 @@ int main(int argc, char **argv, char **envp) {
         }
     }
 
+    /* Tool smoke test: find can see common /bin tools (directory listing correctness). */
+    {
+        char out[512];
+        const char *const find_argv[] = {"find", "/bin", "-maxdepth", "1", "-name", "sh", 0};
+        if (run_capture("/bin/find", find_argv, out, sizeof(out)) != 0) {
+            sys_puts("[kinit] find(/bin) capture failed\n");
+            failed |= 1;
+        } else {
+            if (!mem_contains(out, cstr_len_u64_local(out), "/bin/sh")) {
+                sys_puts("[kinit] find(/bin) missing /bin/sh (bad getdents64?)\n");
+                failed |= 1;
+            }
+        }
+    }
+
     {
         const char *const test_argv[] = {"sh", "-c", "cd /home; pwd", 0};
         failed |= run_test("/bin/sh -c \"cd /home; pwd\"", "/bin/sh", test_argv);
