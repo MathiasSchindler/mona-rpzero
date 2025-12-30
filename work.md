@@ -20,11 +20,6 @@ This document is an actionable work plan for this repo’s **bare-metal AArch64 
 
 ---
 
-## Priority 0 (P0): Correctness + cleanup that prevents future bugs
-
-These items reduce duplication and semantic drift. They are low-risk and increase confidence.
----
-
 ## Priority 1 (P1): Compatibility improvements (high ROI)
 
 ### P1.1 Tighten symlink semantics
