@@ -24,6 +24,7 @@ uint64_t __syscall4_upup(uint64_t nr, uint64_t a0, void *p1, uint64_t a2, void *
 #define __NR_dup3      24ull
 #define __NR_mkdirat   34ull
 #define __NR_unlinkat  35ull
+#define __NR_linkat    37ull
 #define __NR_chdir     49ull
 #define __NR_openat    56ull
 #define __NR_close     57ull
@@ -212,6 +213,16 @@ static inline uint64_t sys_mkdirat(uint64_t dirfd, const char *pathname, uint64_
 
 static inline uint64_t sys_unlinkat(uint64_t dirfd, const char *pathname, uint64_t flags) {
     return __syscall3_p(__NR_unlinkat, dirfd, (void *)pathname, flags);
+}
+
+static inline uint64_t sys_linkat(int64_t olddirfd, const char *oldpath, int64_t newdirfd, const char *newpath, uint64_t flags) {
+    return __syscall5(
+        __NR_linkat,
+        (uint64_t)olddirfd,
+        (uint64_t)(uintptr_t)oldpath,
+        (uint64_t)newdirfd,
+        (uint64_t)(uintptr_t)newpath,
+        flags);
 }
 
 static inline uint64_t sys_close(uint64_t fd) {

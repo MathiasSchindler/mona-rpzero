@@ -205,6 +205,124 @@ uint64_t sys_mkdirat(int64_t dirfd, uint64_t pathname_user, uint64_t mode) {
     return 0;
 }
 
+uint64_t sys_linkat(int64_t olddirfd, uint64_t oldpath_user, int64_t newdirfd, uint64_t newpath_user, uint64_t flags) {
+    if (olddirfd != AT_FDCWD || newdirfd != AT_FDCWD) {
+        return (uint64_t)(-(int64_t)ENOSYS);
+    }
+    if (flags != 0) {
+        return (uint64_t)(-(int64_t)ENOSYS);
+    }
+    if (oldpath_user == 0 || newpath_user == 0) {
+        return (uint64_t)(-(int64_t)EFAULT);
+    }
+
+    char old_in[MAX_PATH];
+    if (copy_cstr_from_user(old_in, sizeof(old_in), oldpath_user) != 0) {
+        return (uint64_t)(-(int64_t)EFAULT);
+    }
+    char new_in[MAX_PATH];
+    if (copy_cstr_from_user(new_in, sizeof(new_in), newpath_user) != 0) {
+        return (uint64_t)(-(int64_t)EFAULT);
+    }
+
+    proc_t *cur = &g_procs[g_cur_proc];
+
+    char old_abs[MAX_PATH];
+    if (resolve_path(cur, old_in, old_abs, sizeof(old_abs)) != 0) {
+        return (uint64_t)(-(int64_t)EINVAL);
+    }
+    char new_abs[MAX_PATH];
+    if (resolve_path(cur, new_in, new_abs, sizeof(new_abs)) != 0) {
+        return (uint64_t)(-(int64_t)EINVAL);
+    }
+
+    /* Special cases. */
+    if (cstr_eq_u64(old_abs, "/") || cstr_eq_u64(new_abs, "/")) {
+        return (uint64_t)(-(int64_t)EPERM);
+    }
+
+    /* Old path must exist and be a regular file in the overlay ramfile layer. */
+    uint32_t old_mode = 0;
+    if (vfs_lookup_abs(old_abs, 0, 0, &old_mode) != 0) {
+        return (uint64_t)(-(int64_t)ENOENT);
+    }
+    if ((old_mode & 0170000u) == 0040000u) {
+        /* Hardlinking directories is forbidden. */
+        return (uint64_t)(-(int64_t)EPERM);
+    }
+
+    uint32_t old_ramfile_id = 0;
+    if (vfs_ramfile_find_abs(old_abs, &old_ramfile_id) != 0) {
+        /* Exists in initramfs (read-only) or non-overlay => reject as read-only. */
+        return (uint64_t)(-(int64_t)EROFS);
+    }
+    (void)old_ramfile_id;
+
+    /* New path must not exist. */
+    uint32_t tmp_mode = 0;
+    if (vfs_lookup_abs(new_abs, 0, 0, &tmp_mode) == 0) {
+        return (uint64_t)(-(int64_t)EEXIST);
+    }
+
+    /* Parent of new path must exist and be a directory. */
+    const char *np = new_abs;
+    while (*np == '/') np++;
+    if (*np == '\0') {
+        return (uint64_t)(-(int64_t)EINVAL);
+    }
+
+    char parent_no_slash[MAX_PATH];
+    {
+        uint64_t n = cstr_len_u64(np);
+        if (n + 1 > sizeof(parent_no_slash)) return (uint64_t)(-(int64_t)ENAMETOOLONG);
+        for (uint64_t i = 0; i <= n; i++) parent_no_slash[i] = np[i];
+
+        /* Trim trailing slashes just in case. */
+        while (n > 0 && parent_no_slash[n - 1] == '/') {
+            parent_no_slash[n - 1] = '\0';
+            n--;
+        }
+        if (n == 0) return (uint64_t)(-(int64_t)EINVAL);
+
+        /* Find last '/'. */
+        int last = -1;
+        for (uint64_t i = 0; parent_no_slash[i] != '\0'; i++) {
+            if (parent_no_slash[i] == '/') last = (int)i;
+        }
+        if (last >= 0) {
+            parent_no_slash[last] = '\0';
+        } else {
+            parent_no_slash[0] = '\0';
+        }
+    }
+
+    char parent_abs[MAX_PATH];
+    if (parent_no_slash[0] == '\0') {
+        parent_abs[0] = '/';
+        parent_abs[1] = '\0';
+    } else {
+        uint64_t pn = cstr_len_u64(parent_no_slash);
+        if (pn + 2 > sizeof(parent_abs)) return (uint64_t)(-(int64_t)ENAMETOOLONG);
+        parent_abs[0] = '/';
+        for (uint64_t i = 0; i <= pn; i++) parent_abs[1 + i] = parent_no_slash[i];
+    }
+
+    uint32_t pmode = 0;
+    if (vfs_lookup_abs(parent_abs, 0, 0, &pmode) != 0) {
+        return (uint64_t)(-(int64_t)ENOENT);
+    }
+    if ((pmode & 0170000u) != 0040000u) {
+        return (uint64_t)(-(int64_t)ENOTDIR);
+    }
+
+    /* Create the overlay hardlink. */
+    const char *op = old_abs;
+    while (*op == '/') op++;
+    int rc = vfs_ramfile_link(op, np);
+    if (rc != 0) return (uint64_t)(int64_t)rc;
+    return 0;
+}
+
 uint64_t sys_ioctl(uint64_t fd, uint64_t req, uint64_t argp_user) {
     proc_t *cur = &g_procs[g_cur_proc];
     int didx = fd_get_desc_idx(&cur->fdt, fd);

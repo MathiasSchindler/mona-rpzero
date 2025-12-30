@@ -7,6 +7,7 @@ enum {
     MAX_PATH = 256,
     MAX_RAMDIRS = 64,
     MAX_RAMFILES = 64,
+    MAX_RAMINODES = 64,
     RAMFILE_CAP = 4096,
 };
 
@@ -20,13 +21,47 @@ static ramdir_t g_ramdirs[MAX_RAMDIRS];
 
 typedef struct {
     uint8_t used;
-    uint32_t mode;       /* includes S_IFREG */
+    uint32_t mode; /* includes S_IFREG */
     uint64_t size;
-    char path[MAX_PATH];
+    uint32_t nlink;
     uint8_t data[RAMFILE_CAP];
+} raminode_t;
+
+static raminode_t g_raminodes[MAX_RAMINODES];
+
+typedef struct {
+    uint8_t used;
+    uint32_t inode_id;
+    char path[MAX_PATH];
 } ramfile_t;
 
 static ramfile_t g_ramfiles[MAX_RAMFILES];
+
+static int raminode_alloc_slot(void) {
+    for (int i = 0; i < (int)MAX_RAMINODES; i++) {
+        if (!g_raminodes[i].used) return i;
+    }
+    return -1;
+}
+
+static void raminode_incref(uint32_t id) {
+    if (id >= (uint32_t)MAX_RAMINODES) return;
+    if (!g_raminodes[id].used) return;
+    g_raminodes[id].nlink++;
+}
+
+static void raminode_decref(uint32_t id) {
+    if (id >= (uint32_t)MAX_RAMINODES) return;
+    if (!g_raminodes[id].used) return;
+    if (g_raminodes[id].nlink > 0) g_raminodes[id].nlink--;
+    if (g_raminodes[id].nlink == 0) {
+        g_raminodes[id].used = 0;
+        g_raminodes[id].mode = 0;
+        g_raminodes[id].size = 0;
+        g_raminodes[id].nlink = 0;
+        for (uint64_t i = 0; i < (uint64_t)RAMFILE_CAP; i++) g_raminodes[id].data[i] = 0;
+    }
+}
 
 static uint64_t cstr_len_u64(const char *s) {
     uint64_t n = 0;
@@ -94,11 +129,17 @@ void vfs_init(void) {
 
     for (uint64_t i = 0; i < (uint64_t)MAX_RAMFILES; i++) {
         g_ramfiles[i].used = 0;
-        g_ramfiles[i].mode = 0;
-        g_ramfiles[i].size = 0;
+        g_ramfiles[i].inode_id = 0;
         g_ramfiles[i].path[0] = '\0';
+    }
+
+    for (uint64_t i = 0; i < (uint64_t)MAX_RAMINODES; i++) {
+        g_raminodes[i].used = 0;
+        g_raminodes[i].mode = 0;
+        g_raminodes[i].size = 0;
+        g_raminodes[i].nlink = 0;
         for (uint64_t j = 0; j < (uint64_t)RAMFILE_CAP; j++) {
-            g_ramfiles[i].data[j] = 0;
+            g_raminodes[i].data[j] = 0;
         }
     }
 }
@@ -132,10 +173,15 @@ int vfs_lookup_abs(const char *abs_path, const uint8_t **out_data, uint64_t *out
 
     int fidx = ramfile_find(p);
     if (fidx >= 0) {
-        if (out_data) *out_data = (const uint8_t *)g_ramfiles[fidx].data;
-        if (out_size) *out_size = g_ramfiles[fidx].size;
-        if (out_mode) *out_mode = g_ramfiles[fidx].mode;
-        return 0;
+        uint32_t inode_id = g_ramfiles[fidx].inode_id;
+        if (inode_id < (uint32_t)MAX_RAMINODES && g_raminodes[inode_id].used) {
+            if (out_data) *out_data = (const uint8_t *)g_raminodes[inode_id].data;
+            if (out_size) *out_size = g_raminodes[inode_id].size;
+            if (out_mode) *out_mode = g_raminodes[inode_id].mode;
+            return 0;
+        }
+        /* Corrupt entry; treat as missing. */
+        return -1;
     }
 
     if (initramfs_lookup(abs_path, out_data, out_size, out_mode) == 0) {
@@ -271,7 +317,12 @@ int vfs_list_dir(const char *dir_path_no_slash, initramfs_dir_cb_t cb, void *ctx
                 child_mode = g_ramdirs[ei].mode;
             } else {
                 int ef = ramfile_find(child_full);
-                if (ef >= 0) child_mode = g_ramfiles[ef].mode;
+                if (ef >= 0) {
+                    uint32_t inode_id = g_ramfiles[ef].inode_id;
+                    if (inode_id < (uint32_t)MAX_RAMINODES && g_raminodes[inode_id].used) {
+                        child_mode = g_raminodes[inode_id].mode;
+                    }
+                }
             }
         }
 
@@ -370,16 +421,25 @@ int vfs_ramfile_create(const char *path_no_slash, uint32_t mode) {
         return -(int)ENOMEM;
     }
 
+    int inode_slot = raminode_alloc_slot();
+    if (inode_slot < 0) {
+        return -(int)ENOMEM;
+    }
+
     uint64_t n = cstr_len_u64(path_no_slash);
     if (n + 1 > sizeof(g_ramfiles[slot].path)) {
         return -(int)ENAMETOOLONG;
     }
 
     g_ramfiles[slot].used = 1;
-    g_ramfiles[slot].mode = mode;
-    g_ramfiles[slot].size = 0;
+    g_ramfiles[slot].inode_id = (uint32_t)inode_slot;
     for (uint64_t i = 0; i <= n; i++) g_ramfiles[slot].path[i] = path_no_slash[i];
-    for (uint64_t i = 0; i < (uint64_t)RAMFILE_CAP; i++) g_ramfiles[slot].data[i] = 0;
+
+    g_raminodes[inode_slot].used = 1;
+    g_raminodes[inode_slot].mode = mode;
+    g_raminodes[inode_slot].size = 0;
+    g_raminodes[inode_slot].nlink = 1;
+    for (uint64_t i = 0; i < (uint64_t)RAMFILE_CAP; i++) g_raminodes[inode_slot].data[i] = 0;
 
     return 0;
 }
@@ -392,10 +452,49 @@ int vfs_ramfile_unlink(const char *path_no_slash) {
     if (idx < 0) {
         return -(int)ENOENT;
     }
+    uint32_t inode_id = g_ramfiles[idx].inode_id;
     g_ramfiles[idx].used = 0;
-    g_ramfiles[idx].mode = 0;
-    g_ramfiles[idx].size = 0;
+    g_ramfiles[idx].inode_id = 0;
     g_ramfiles[idx].path[0] = '\0';
+    raminode_decref(inode_id);
+    return 0;
+}
+
+int vfs_ramfile_link(const char *old_path_no_slash, const char *new_path_no_slash) {
+    if (!old_path_no_slash || old_path_no_slash[0] == '\0') return -(int)ENOENT;
+    if (!new_path_no_slash || new_path_no_slash[0] == '\0') return -(int)ENOENT;
+
+    int old_idx = ramfile_find(old_path_no_slash);
+    if (old_idx < 0) {
+        return -(int)ENOENT;
+    }
+
+    if (ramfile_find(new_path_no_slash) >= 0) {
+        return -(int)EEXIST;
+    }
+    if (ramdir_find(new_path_no_slash) >= 0) {
+        return -(int)EEXIST;
+    }
+
+    int slot = ramfile_alloc_slot();
+    if (slot < 0) {
+        return -(int)ENOMEM;
+    }
+
+    uint64_t n = cstr_len_u64(new_path_no_slash);
+    if (n + 1 > sizeof(g_ramfiles[slot].path)) {
+        return -(int)ENAMETOOLONG;
+    }
+
+    uint32_t inode_id = g_ramfiles[old_idx].inode_id;
+    if (inode_id >= (uint32_t)MAX_RAMINODES || !g_raminodes[inode_id].used) {
+        return -(int)ENOENT;
+    }
+
+    g_ramfiles[slot].used = 1;
+    g_ramfiles[slot].inode_id = inode_id;
+    for (uint64_t i = 0; i <= n; i++) g_ramfiles[slot].path[i] = new_path_no_slash[i];
+    raminode_incref(inode_id);
     return 0;
 }
 
@@ -412,10 +511,14 @@ int vfs_ramfile_find_abs(const char *abs_path, uint32_t *out_id) {
 int vfs_ramfile_get(uint32_t id, uint8_t **out_data, uint64_t *out_size, uint64_t *out_cap, uint32_t *out_mode) {
     if (id >= (uint32_t)MAX_RAMFILES) return -(int)EINVAL;
     if (!g_ramfiles[id].used) return -(int)ENOENT;
-    if (out_data) *out_data = g_ramfiles[id].data;
-    if (out_size) *out_size = g_ramfiles[id].size;
+
+    uint32_t inode_id = g_ramfiles[id].inode_id;
+    if (inode_id >= (uint32_t)MAX_RAMINODES) return -(int)ENOENT;
+    if (!g_raminodes[inode_id].used) return -(int)ENOENT;
+    if (out_data) *out_data = g_raminodes[inode_id].data;
+    if (out_size) *out_size = g_raminodes[inode_id].size;
     if (out_cap) *out_cap = (uint64_t)RAMFILE_CAP;
-    if (out_mode) *out_mode = g_ramfiles[id].mode;
+    if (out_mode) *out_mode = g_raminodes[inode_id].mode;
     return 0;
 }
 
@@ -423,6 +526,10 @@ int vfs_ramfile_set_size(uint32_t id, uint64_t new_size) {
     if (id >= (uint32_t)MAX_RAMFILES) return -(int)EINVAL;
     if (!g_ramfiles[id].used) return -(int)ENOENT;
     if (new_size > (uint64_t)RAMFILE_CAP) return -(int)EINVAL;
-    g_ramfiles[id].size = new_size;
+
+    uint32_t inode_id = g_ramfiles[id].inode_id;
+    if (inode_id >= (uint32_t)MAX_RAMINODES) return -(int)ENOENT;
+    if (!g_raminodes[inode_id].used) return -(int)ENOENT;
+    g_raminodes[inode_id].size = new_size;
     return 0;
 }

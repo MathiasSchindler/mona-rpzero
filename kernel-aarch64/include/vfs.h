@@ -34,6 +34,12 @@ int vfs_ramdir_remove(const char *path_no_slash);
 int vfs_ramfile_create(const char *path_no_slash, uint32_t mode);
 int vfs_ramfile_unlink(const char *path_no_slash);
 
+/* Create a hardlink in the overlay ramfile table.
+ * Both paths are normalized, no leading slash, no trailing slash.
+ * Only supports linking overlay ramfiles (initramfs files are read-only).
+ */
+int vfs_ramfile_link(const char *old_path_no_slash, const char *new_path_no_slash);
+
 /* Lookup ramfile by absolute path. Returns 0 and sets out_id on success. */
 int vfs_ramfile_find_abs(const char *abs_path, uint32_t *out_id);
 

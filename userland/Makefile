@@ -42,9 +42,10 @@ USER_BASE ?= 0x0000000000400000
 
 
 
+
 .PHONY: all clean check-toolchain check-nolibc initramfs
 
-all: check-nolibc $(BUILD)/echo.bin $(BUILD)/true.bin $(BUILD)/false.bin $(BUILD)/cat.bin $(BUILD)/ls.bin $(BUILD)/pwd.bin $(BUILD)/pid.bin $(BUILD)/uname.bin $(BUILD)/mkdir.bin $(BUILD)/touch.bin $(BUILD)/rm.bin $(BUILD)/rmdir.bin $(BUILD)/seq.bin $(BUILD)/uniq.bin $(BUILD)/wc.bin $(BUILD)/grep.bin $(BUILD)/ps.bin $(BUILD)/kill.bin $(BUILD)/pstree.bin $(BUILD)/find.bin $(BUILD)/awk.bin $(BUILD)/brk.bin $(BUILD)/mmap.bin $(BUILD)/cwd.bin $(BUILD)/tty.bin $(BUILD)/sleep.bin $(BUILD)/date.bin $(BUILD)/uptime.bin $(BUILD)/compat.bin $(BUILD)/kinit.bin $(BUILD)/sh.bin $(BUILD)/init.bin
+all: check-nolibc $(BUILD)/echo.bin $(BUILD)/true.bin $(BUILD)/false.bin $(BUILD)/cat.bin $(BUILD)/ls.bin $(BUILD)/pwd.bin $(BUILD)/pid.bin $(BUILD)/uname.bin $(BUILD)/mkdir.bin $(BUILD)/touch.bin $(BUILD)/rm.bin $(BUILD)/rmdir.bin $(BUILD)/seq.bin $(BUILD)/uniq.bin $(BUILD)/wc.bin $(BUILD)/grep.bin $(BUILD)/ps.bin $(BUILD)/kill.bin $(BUILD)/pstree.bin $(BUILD)/find.bin $(BUILD)/awk.bin $(BUILD)/basename.bin $(BUILD)/du.bin $(BUILD)/ln.bin $(BUILD)/tr.bin $(BUILD)/brk.bin $(BUILD)/mmap.bin $(BUILD)/cwd.bin $(BUILD)/tty.bin $(BUILD)/sleep.bin $(BUILD)/date.bin $(BUILD)/uptime.bin $(BUILD)/compat.bin $(BUILD)/kinit.bin $(BUILD)/sh.bin $(BUILD)/init.bin
 
 initramfs: $(BUILD)/initramfs.cpio
 
@@ -129,6 +130,18 @@ $(BUILD)/grep.o: src/grep.c include/syscall.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/awk.o: src/awk.c include/syscall.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/basename.o: src/basename.c include/syscall.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/du.o: src/du.c include/syscall.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/ln.o: src/ln.c include/syscall.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/tr.o: src/tr.c include/syscall.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/ps.o: src/ps.c include/syscall.h | $(BUILD)
@@ -244,6 +257,22 @@ $(BUILD)/awk.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BU
 	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
 	$(POSTLINK)
 
+$(BUILD)/basename.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/basename.o | check-toolchain
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
+
+$(BUILD)/du.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/du.o | check-toolchain
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
+
+$(BUILD)/ln.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/ln.o | check-toolchain
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
+
+$(BUILD)/tr.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/tr.o | check-toolchain
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
+
 $(BUILD)/ps.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/ps.o | check-toolchain
 	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
 	$(POSTLINK)
@@ -355,6 +384,18 @@ $(BUILD)/grep.bin: $(BUILD)/grep.elf | check-toolchain
 $(BUILD)/awk.bin: $(BUILD)/awk.elf | check-toolchain
 	$(OBJCOPY) -O binary $< $@
 
+$(BUILD)/basename.bin: $(BUILD)/basename.elf | check-toolchain
+	$(OBJCOPY) -O binary $< $@
+
+$(BUILD)/du.bin: $(BUILD)/du.elf | check-toolchain
+	$(OBJCOPY) -O binary $< $@
+
+$(BUILD)/ln.bin: $(BUILD)/ln.elf | check-toolchain
+	$(OBJCOPY) -O binary $< $@
+
+$(BUILD)/tr.bin: $(BUILD)/tr.elf | check-toolchain
+	$(OBJCOPY) -O binary $< $@
+
 $(BUILD)/ps.bin: $(BUILD)/ps.elf | check-toolchain
 	$(OBJCOPY) -O binary $< $@
 
@@ -423,6 +464,10 @@ $(BUILD)/initramfs.cpio: $(TOOLS_DIR)/mkcpio_newc.py all | $(BUILD)
 	@cp "$(BUILD)/wc.elf"  "$(INITRAMFS_ROOT)/bin/wc"
 	@cp "$(BUILD)/grep.elf"  "$(INITRAMFS_ROOT)/bin/grep"
 	@cp "$(BUILD)/awk.elf"  "$(INITRAMFS_ROOT)/bin/awk"
+	@cp "$(BUILD)/basename.elf"  "$(INITRAMFS_ROOT)/bin/basename"
+	@cp "$(BUILD)/du.elf"  "$(INITRAMFS_ROOT)/bin/du"
+	@cp "$(BUILD)/ln.elf"  "$(INITRAMFS_ROOT)/bin/ln"
+	@cp "$(BUILD)/tr.elf"  "$(INITRAMFS_ROOT)/bin/tr"
 	@cp "$(BUILD)/ps.elf"  "$(INITRAMFS_ROOT)/bin/ps"
 	@cp "$(BUILD)/kill.elf"  "$(INITRAMFS_ROOT)/bin/kill"
 	@cp "$(BUILD)/pstree.elf"  "$(INITRAMFS_ROOT)/bin/pstree"

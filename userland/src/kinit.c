@@ -150,6 +150,30 @@ static uint64_t ts_to_ns_clamp(linux_timespec_t ts) {
     return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
 }
 
+static void write_i64_dec_local(int64_t v) {
+    char buf[32];
+    uint64_t n = 0;
+    if (v < 0) {
+        buf[n++] = '-';
+        v = -v;
+    }
+    if (v == 0) {
+        buf[n++] = '0';
+    } else {
+        char tmp[32];
+        uint64_t t = (uint64_t)v;
+        uint64_t m = 0;
+        while (t > 0 && m < sizeof(tmp)) {
+            tmp[m++] = (char)('0' + (t % 10));
+            t /= 10;
+        }
+        while (m > 0) {
+            buf[n++] = tmp[--m];
+        }
+    }
+    (void)sys_write(1, buf, n);
+}
+
 int main(int argc, char **argv, char **envp) {
     (void)argc;
     (void)argv;
@@ -244,6 +268,97 @@ int main(int argc, char **argv, char **envp) {
         } else if (!mem_contains(out, cstr_len_u64_local(out), "y")) {
             sys_puts("[kinit] awk(pattern) output missing expected match\n");
             failed |= 1;
+        }
+    }
+
+    /* Tool smoke test: basename. */
+    {
+        char out[128];
+        const char *const bn_argv[] = {"basename", "/a/b/c", 0};
+        if (run_capture("/bin/basename", bn_argv, out, sizeof(out)) != 0) {
+            sys_puts("[kinit] basename capture failed\n");
+            failed |= 1;
+        } else if (!mem_contains(out, cstr_len_u64_local(out), "c\n")) {
+            sys_puts("[kinit] basename output unexpected\n");
+            failed |= 1;
+        }
+    }
+
+    /* Tool smoke test: tr. */
+    {
+        char out[128];
+        const char *const tr_argv[] = {"sh", "-c", "echo abc | tr abc ABC", 0};
+        if (run_capture("/bin/sh", tr_argv, out, sizeof(out)) != 0) {
+            sys_puts("[kinit] tr capture failed\n");
+            failed |= 1;
+        } else if (!mem_contains(out, cstr_len_u64_local(out), "ABC")) {
+            sys_puts("[kinit] tr output unexpected\n");
+            failed |= 1;
+        }
+    }
+
+    /* Tool smoke test: du over a known file. */
+    {
+        char out[256];
+        const char *const du_argv[] = {"du", "/uniq.txt", 0};
+        if (run_capture("/bin/du", du_argv, out, sizeof(out)) != 0) {
+            sys_puts("[kinit] du capture failed\n");
+            failed |= 1;
+        } else if (!mem_contains(out, cstr_len_u64_local(out), "/uniq.txt")) {
+            sys_puts("[kinit] du output missing path\n");
+            failed |= 1;
+        }
+    }
+
+    /* Tool smoke test: ln creates an overlay hardlink; unlink preserves remaining name. */
+    {
+        enum {
+            AT_FDCWD = -100,
+            O_RDONLY = 0,
+            O_WRONLY = 1,
+            O_CREAT = 0100,
+            AT_REMOVEDIR = 0x200,
+        };
+
+        /* Best-effort cleanup from prior runs. */
+        (void)sys_unlinkat((uint64_t)AT_FDCWD, "/lntest/a", 0);
+        (void)sys_unlinkat((uint64_t)AT_FDCWD, "/lntest/b", 0);
+        (void)sys_unlinkat((uint64_t)AT_FDCWD, "/lntest", (uint64_t)AT_REMOVEDIR);
+
+        (void)sys_mkdirat((uint64_t)AT_FDCWD, "/lntest", 0755);
+
+        uint64_t fd = sys_openat((uint64_t)AT_FDCWD, "/lntest/a", (uint64_t)(O_CREAT | O_WRONLY), 0644);
+        if ((int64_t)fd < 0) {
+            sys_puts("[kinit] ln setup: openat failed rc=");
+            write_i64_dec_local((int64_t)fd);
+            sys_puts("\n");
+            failed |= 1;
+        } else {
+            (void)sys_close(fd);
+
+            const char *const ln_argv[] = {"ln", "/lntest/a", "/lntest/b", 0};
+            failed |= run_test("/bin/ln /lntest/a /lntest/b", "/bin/ln", ln_argv);
+
+            int64_t urc = (int64_t)sys_unlinkat((uint64_t)AT_FDCWD, "/lntest/a", 0);
+            if (urc < 0) {
+                sys_puts("[kinit] ln: unlinkat(a) failed rc=");
+                write_i64_dec_local(urc);
+                sys_puts("\n");
+                failed |= 1;
+            }
+
+            uint64_t bfd = sys_openat((uint64_t)AT_FDCWD, "/lntest/b", (uint64_t)O_RDONLY, 0);
+            if ((int64_t)bfd < 0) {
+                sys_puts("[kinit] ln: openat(b) failed rc=");
+                write_i64_dec_local((int64_t)bfd);
+                sys_puts("\n");
+                failed |= 1;
+            } else {
+                (void)sys_close(bfd);
+            }
+
+            (void)sys_unlinkat((uint64_t)AT_FDCWD, "/lntest/b", 0);
+            (void)sys_unlinkat((uint64_t)AT_FDCWD, "/lntest", (uint64_t)AT_REMOVEDIR);
         }
     }
 
