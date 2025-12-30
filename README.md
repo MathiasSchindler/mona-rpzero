@@ -6,7 +6,7 @@ The long-term direction is to provide a small, Linux-inspired environment with a
 
 ## Project plan
 
-For the detailed roadmap, design constraints, and current status, see: [plan.md](plan.md)
+For the detailed roadmap, design constraints, and current status, see: [docs/plan.md](docs/plan.md)
 
 ## Notes
 

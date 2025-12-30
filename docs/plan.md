@@ -23,6 +23,8 @@ This document mirrors that approach, but adapted for AArch64 + Raspberry Pi.
 - **Start with static binaries**: initial compatibility targets should be **statically linked** (e.g. musl `-static`) to avoid the dynamic linker and many extra syscalls.
 - **Keep it debuggable**: early serial logging, deterministic failure modes, and simple memory layout.
 
+For a step-by-step plan to add framebuffer graphics and a FullHD terminal (QEMU-first, Pi later), see: [video.md](video.md)
+
 ## Quickstart (QEMU-first)
 
 This repo is designed for a **kernel-first bare-metal workflow**: custom kernel + tiny syscall-only userland, loaded directly by QEMU (no Linux, no SD image required).
