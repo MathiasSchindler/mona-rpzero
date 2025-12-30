@@ -297,6 +297,32 @@ int main(int argc, char **argv, char **envp) {
         }
     }
 
+    /* Tool smoke test: tr -s (squeeze). */
+    {
+        char out[128];
+        const char *const tr_argv[] = {"sh", "-c", "echo aaabbb | tr -s ab", 0};
+        if (run_capture("/bin/sh", tr_argv, out, sizeof(out)) != 0) {
+            sys_puts("[kinit] tr -s capture failed\n");
+            failed |= 1;
+        } else if (!mem_contains(out, cstr_len_u64_local(out), "ab")) {
+            sys_puts("[kinit] tr -s output unexpected\n");
+            failed |= 1;
+        }
+    }
+
+    /* Tool smoke test: tr -c (complement). */
+    {
+        char out[128];
+        const char *const tr_argv[] = {"sh", "-c", "echo abc | tr -c a X", 0};
+        if (run_capture("/bin/sh", tr_argv, out, sizeof(out)) != 0) {
+            sys_puts("[kinit] tr -c capture failed\n");
+            failed |= 1;
+        } else if (!mem_contains(out, cstr_len_u64_local(out), "aXX")) {
+            sys_puts("[kinit] tr -c output unexpected\n");
+            failed |= 1;
+        }
+    }
+
     /* Tool smoke test: du over a known file. */
     {
         char out[256];
@@ -308,6 +334,27 @@ int main(int argc, char **argv, char **envp) {
             sys_puts("[kinit] du output missing path\n");
             failed |= 1;
         }
+    }
+
+    /* Tool smoke test: du -a (includes files). */
+    {
+        enum {
+            AT_FDCWD = -100,
+            AT_REMOVEDIR = 0x200,
+        };
+
+        char out[512];
+        const char *const du_argv[] = {"sh", "-c", "mkdir -p /dutest; touch /dutest/x; du -a /dutest", 0};
+        if (run_capture("/bin/sh", du_argv, out, sizeof(out)) != 0) {
+            sys_puts("[kinit] du -a capture failed\n");
+            failed |= 1;
+        } else if (!mem_contains(out, cstr_len_u64_local(out), "/dutest/x")) {
+            sys_puts("[kinit] du -a output missing file\n");
+            failed |= 1;
+        }
+
+        (void)sys_unlinkat((uint64_t)AT_FDCWD, "/dutest/x", 0);
+        (void)sys_unlinkat((uint64_t)AT_FDCWD, "/dutest", (uint64_t)AT_REMOVEDIR);
     }
 
     /* Tool smoke test: ln creates an overlay hardlink; unlink preserves remaining name. */

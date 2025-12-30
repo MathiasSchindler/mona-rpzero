@@ -29,13 +29,13 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | ln | Partial | 1 |
 | pwd | Partial | 1 |
 | basename | Partial | 2 |
-| du | Partial | 2 |
+| du | Partial | 5 |
 | ls | Partial | 5 |
 | readelf | Planned | 0 |
 | touch | Partial | 2 |
 | echo | Partial | 1 |
 | readlink | Planned | 0 |
-| tr | Partial | 3 |
+| tr | Partial | 5 |
 | bpe | Planned | 0 |
 | env | Planned | 0 |
 | rev | Planned | 0 |
@@ -111,6 +111,8 @@ Notes on current “Partial” implementations:
 - `echo`: prints argv separated by spaces; no flags.
 - `cat`: supports stdin→stdout and a single file argument.
 - `awk`: supports `/TEXT/ {print ...}` substring match, `-F` single-char separator, and printing `$N`, `NR`, `NF`.
+- `du`: prints byte totals; by default prints directory totals (post-order); flags: `-s` summary-only, `-a` include files, `-h` human-readable.
+- `tr`: supports basic SET parsing (ranges like `a-z`, escapes like `\\n`/`\\t`/`\\xNN`); flags: `-d` delete, `-s` squeeze repeats, `-c` complement SET1.
 - `uname`: prints `sysname release machine`; no flags.
 - `sleep`: accepts `SECONDS[.FRACTION]` and calls `nanosleep`.
 - `sh`: supports interactive mode, `-c`, and a single `cmd1 | cmd2` pipeline.

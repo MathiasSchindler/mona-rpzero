@@ -53,6 +53,31 @@ static void write_u64_dec(uint64_t v) {
     (void)sys_write(1, tmp, t);
 }
 
+static void write_size(uint64_t bytes, int human) {
+    if (!human) {
+        write_u64_dec(bytes);
+        return;
+    }
+
+    static const char *const suf[] = {"B", "K", "M", "G", "T"};
+    uint64_t val = bytes;
+    uint64_t rem = 0;
+    uint64_t unit = 0;
+    while (val >= 1024u && unit + 1 < (uint64_t)(sizeof(suf) / sizeof(suf[0]))) {
+        rem = val % 1024u;
+        val /= 1024u;
+        unit++;
+    }
+
+    write_u64_dec(val);
+    if (unit > 0) {
+        uint64_t frac = (rem * 10u) / 1024u;
+        (void)sys_write(1, ".", 1);
+        (void)sys_write(1, (char[]){(char)('0' + (char)frac)}, 1);
+    }
+    sys_puts(suf[unit]);
+}
+
 static int join_path(char *out, uint64_t cap, const char *base, const char *name) {
     uint64_t bl = cstr_len_u64_local(base);
     uint64_t nl = cstr_len_u64_local(name);
@@ -69,7 +94,7 @@ static int join_path(char *out, uint64_t cap, const char *base, const char *name
     return 0;
 }
 
-static uint64_t du_path(const char *path, int depth) {
+static uint64_t du_walk(const char *path, int depth, int is_root, int summary_only, int include_files, int human, int *printed_any) {
     if (depth > MAX_DEPTH) {
         return 0;
     }
@@ -82,11 +107,18 @@ static uint64_t du_path(const char *path, int depth) {
     }
 
     uint32_t mode = st.st_mode;
-    uint64_t total = 0;
 
     if ((mode & 0170000u) == 0100000u) {
         /* Regular file. */
-        return (uint64_t)st.st_size;
+        uint64_t sz = (uint64_t)st.st_size;
+        if (!summary_only && (include_files || is_root)) {
+            write_size(sz, human);
+            sys_puts("\t");
+            sys_puts(path);
+            sys_puts("\n");
+            if (printed_any) *printed_any = 1;
+        }
+        return sz;
     }
 
     if ((mode & 0170000u) != 0040000u) {
@@ -97,6 +129,8 @@ static uint64_t du_path(const char *path, int depth) {
     if ((int64_t)dfd < 0) {
         return 0;
     }
+
+    uint64_t total = 0;
 
     char buf[DENTS_BUF];
     for (;;) {
@@ -117,7 +151,7 @@ static uint64_t du_path(const char *path, int depth) {
             if (!streq(name, ".") && !streq(name, "..")) {
                 char child[MAX_PATH];
                 if (join_path(child, sizeof(child), path, name) == 0) {
-                    total += du_path(child, depth + 1);
+                    total += du_walk(child, depth + 1, 0, summary_only, include_files, human, printed_any);
                 }
             }
 
@@ -126,43 +160,61 @@ static uint64_t du_path(const char *path, int depth) {
     }
 
     (void)sys_close(dfd);
+
+    if (!summary_only || is_root) {
+        write_size(total, human);
+        sys_puts("\t");
+        sys_puts(path);
+        sys_puts("\n");
+        if (printed_any) *printed_any = 1;
+    }
     return total;
 }
 
 static void usage(void) {
-    sys_puts("usage: du [PATH...]\n");
+    sys_puts("usage: du [-ash] [PATH...]\n");
 }
 
 int main(int argc, char **argv, char **envp) {
     (void)envp;
 
-    int first = 1;
-    for (int i = 1; i < argc; i++) {
-        if (argv[i] && argv[i][0] == '-' && argv[i][1] != '\0') {
-            usage();
-            return 1;
+    int summary_only = 0;
+    int include_files = 0;
+    int human = 0;
+
+    int argi = 1;
+    while (argi < argc && argv[argi] && argv[argi][0] == '-' && argv[argi][1] != '\0') {
+        const char *opt = argv[argi] + 1;
+        while (*opt) {
+            if (*opt == 's') {
+                summary_only = 1;
+            } else if (*opt == 'a') {
+                include_files = 1;
+            } else if (*opt == 'h') {
+                human = 1;
+            } else {
+                usage();
+                return 1;
+            }
+            opt++;
         }
-        first = 0;
+        argi++;
     }
 
-    if (first) {
-        const char *p = ".";
-        uint64_t n = du_path(p, 0);
-        write_u64_dec(n);
-        sys_puts("\t");
-        sys_puts(p);
-        sys_puts("\n");
-        return 0;
+    if (argi >= argc) {
+        int printed_any = 0;
+        (void)du_walk(".", 0, 1, summary_only, include_files, human, &printed_any);
+        return printed_any ? 0 : 1;
     }
 
-    for (int i = 1; i < argc; i++) {
+    int overall_fail = 0;
+    for (int i = argi; i < argc; i++) {
         const char *p = argv[i];
-        uint64_t n = du_path(p, 0);
-        write_u64_dec(n);
-        sys_puts("\t");
-        sys_puts(p);
-        sys_puts("\n");
+        int printed_any = 0;
+        (void)du_walk(p, 0, 1, summary_only, include_files, human, &printed_any);
+        if (!printed_any) overall_fail = 1;
     }
 
-    return 0;
+    return overall_fail;
+
 }

@@ -207,10 +207,10 @@ uint64_t sys_mkdirat(int64_t dirfd, uint64_t pathname_user, uint64_t mode) {
 
 uint64_t sys_linkat(int64_t olddirfd, uint64_t oldpath_user, int64_t newdirfd, uint64_t newpath_user, uint64_t flags) {
     if (olddirfd != AT_FDCWD || newdirfd != AT_FDCWD) {
-        return (uint64_t)(-(int64_t)ENOSYS);
+        return (uint64_t)(-(int64_t)EINVAL);
     }
     if (flags != 0) {
-        return (uint64_t)(-(int64_t)ENOSYS);
+        return (uint64_t)(-(int64_t)EINVAL);
     }
     if (oldpath_user == 0 || newpath_user == 0) {
         return (uint64_t)(-(int64_t)EFAULT);
