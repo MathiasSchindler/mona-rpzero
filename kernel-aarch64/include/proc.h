@@ -21,6 +21,7 @@ typedef enum {
     PROC_RUNNABLE = 1,
     PROC_WAITING = 2,
     PROC_ZOMBIE = 3,
+    PROC_SLEEPING = 4,
 } proc_state_t;
 
 typedef struct {
@@ -42,6 +43,7 @@ typedef struct {
     uint64_t clear_child_tid_user;
     int64_t wait_target_pid;
     uint64_t wait_status_user;
+    uint64_t sleep_deadline_ns;
     fd_table_t fdt;
 } proc_t;
 

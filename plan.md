@@ -323,7 +323,7 @@ Deliverables:
   - `getpid/getppid`
   - `getcwd/chdir`
   - `uname`
-  - `clock_gettime`/`nanosleep` (minimal)
+  - `clock_gettime`/`nanosleep` (monotonic + basic sleep)
   - basic `ioctl` subset for tty detection
 
 Acceptance:
@@ -332,10 +332,10 @@ Acceptance:
 
 Notes:
 
-- Implemented: `getpid/getppid`, `uname`, `clock_gettime` (currently returns zero time for realtime/monotonic), `brk`.
+ - Implemented: `getpid/getppid`, `uname`, `clock_gettime` (monotonic time since boot via the AArch64 generic timer; `CLOCK_REALTIME` is currently boot-relative until an RTC/NTP story exists), `brk`.
 - Implemented: `getcwd`/`chdir` (per-process cwd + relative path resolution for `openat`/`newfstatat`/`execve`).
 - Implemented (minimal): anonymous `mmap/munmap` (private+anonymous only, `addr=0` only, no file-backed mappings, no real page unmapping yet — address-space allocator).
-- Implemented (minimal): `nanosleep` (returns immediately; writes {0,0} to rem when provided).
+ - Implemented: `nanosleep` (blocks the calling task until the deadline; cooperative scheduling; writes `{0,0}` to rem when provided).
 - Implemented (minimal): `ioctl` tty subset for UART fds (`TCGETS`, `TIOCGWINSZ`, `TIOCGPGRP`).
 - Implemented (minimal): `getuid/geteuid/getgid/getegid/gettid` (all IDs are 0; tid==pid).
 - Implemented (minimal): `set_tid_address` (stores clear_child_tid; best-effort clears it on exit).

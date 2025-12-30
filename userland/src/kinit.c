@@ -144,6 +144,12 @@ static int run_capture(const char *path, const char *const argv[], char *out, ui
     return (exit_code == 0) ? 0 : 1;
 }
 
+static uint64_t ts_to_ns_clamp(linux_timespec_t ts) {
+    if (ts.tv_sec < 0) return 0;
+    if (ts.tv_nsec < 0) return 0;
+    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+
 int main(int argc, char **argv, char **envp) {
     (void)argc;
     (void)argv;
@@ -294,6 +300,77 @@ int main(int argc, char **argv, char **envp) {
     {
         const char *const test_argv[] = {"sleep", 0};
         failed |= run_test("/bin/sleep", "/bin/sleep", test_argv);
+    }
+
+    /* Phase-8 time tests: clock_gettime monotonicity and sleep actually sleeps. */
+    {
+        sys_puts("[kinit] selftest: clock_gettime monotonic\n");
+        linux_timespec_t a;
+        linux_timespec_t b;
+        if ((int64_t)sys_clock_gettime(1, &a) < 0) {
+            sys_puts("[kinit] clock_gettime(CLOCK_MONOTONIC) failed\n");
+            failed |= 1;
+        } else {
+            for (int i = 0; i < 1000; i++) {
+                (void)sys_getpid();
+            }
+            if ((int64_t)sys_clock_gettime(1, &b) < 0) {
+                sys_puts("[kinit] clock_gettime(CLOCK_MONOTONIC) failed (2)\n");
+                failed |= 1;
+            } else {
+                if (ts_to_ns_clamp(b) < ts_to_ns_clamp(a)) {
+                    sys_puts("[kinit] CLOCK_MONOTONIC went backwards\n");
+                    failed |= 1;
+                }
+            }
+        }
+
+        sys_puts("[kinit] selftest: /bin/sleep 1 duration\n");
+        linux_timespec_t t0;
+        linux_timespec_t t1;
+        if ((int64_t)sys_clock_gettime(1, &t0) < 0) {
+            sys_puts("[kinit] clock_gettime failed before sleep\n");
+            failed |= 1;
+        } else {
+            const char *const sleep_argv[] = {"sleep", "1", 0};
+            failed |= run_test("/bin/sleep 1", "/bin/sleep", sleep_argv);
+            if ((int64_t)sys_clock_gettime(1, &t1) < 0) {
+                sys_puts("[kinit] clock_gettime failed after sleep\n");
+                failed |= 1;
+            } else {
+                uint64_t dt = ts_to_ns_clamp(t1) - ts_to_ns_clamp(t0);
+                if (dt < 900000000ull) {
+                    sys_puts("[kinit] sleep returned too early\n");
+                    failed |= 1;
+                }
+            }
+        }
+    }
+
+    /* Tool smoke tests: date + uptime exist and produce plausible output. */
+    {
+        char out[128];
+        const char *const uptime_argv[] = {"uptime", 0};
+        if (run_capture("/bin/uptime", uptime_argv, out, sizeof(out)) != 0) {
+            sys_puts("[kinit] uptime capture failed\n");
+            failed |= 1;
+        } else if (!mem_contains(out, cstr_len_u64_local(out), "up ")) {
+            sys_puts("[kinit] uptime output missing prefix\n");
+            failed |= 1;
+        }
+
+        const char *const date_argv[] = {"date", 0};
+        if (run_capture("/bin/date", date_argv, out, sizeof(out)) != 0) {
+            sys_puts("[kinit] date capture failed\n");
+            failed |= 1;
+        } else {
+            /* Expect something like YYYY-MM-DD HH:MM:SS */
+            if (!mem_contains(out, cstr_len_u64_local(out), "-") ||
+                !mem_contains(out, cstr_len_u64_local(out), ":")) {
+                sys_puts("[kinit] date output looks wrong\n");
+                failed |= 1;
+            }
+        }
     }
 
     {

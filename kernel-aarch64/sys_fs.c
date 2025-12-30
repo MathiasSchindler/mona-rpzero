@@ -30,6 +30,7 @@ static char proc_state_char(proc_state_t st) {
         case PROC_RUNNABLE: return 'R';
         case PROC_WAITING: return 'W';
         case PROC_ZOMBIE: return 'Z';
+        case PROC_SLEEPING: return 'S';
         case PROC_UNUSED: return 'U';
         default: return '?';
     }

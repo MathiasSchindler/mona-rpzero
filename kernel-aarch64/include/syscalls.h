@@ -25,7 +25,7 @@ uint64_t sys_set_tid_address(uint64_t tidptr_user);
 uint64_t sys_set_robust_list(uint64_t head_user, uint64_t len);
 uint64_t sys_rt_sigaction(uint64_t sig, uint64_t act_user, uint64_t oldact_user, uint64_t sigsetsize);
 uint64_t sys_rt_sigprocmask(uint64_t how, uint64_t set_user, uint64_t oldset_user, uint64_t sigsetsize);
-uint64_t sys_nanosleep(uint64_t req_user, uint64_t rem_user);
+uint64_t sys_nanosleep(trap_frame_t *tf, uint64_t req_user, uint64_t rem_user, uint64_t elr);
 uint64_t sys_getrandom(uint64_t buf_user, uint64_t len, uint64_t flags);
 
 uint64_t sys_chdir(uint64_t path_user);

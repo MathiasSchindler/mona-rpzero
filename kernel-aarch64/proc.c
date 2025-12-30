@@ -48,6 +48,7 @@ void proc_clear(proc_t *p) {
     p->clear_child_tid_user = 0;
     p->wait_target_pid = 0;
     p->wait_status_user = 0;
+    p->sleep_deadline_ns = 0;
     for (uint64_t i = 0; i < MAX_FDS; i++) {
         p->fdt.fd_to_desc[i] = -1;
     }

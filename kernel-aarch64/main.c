@@ -5,6 +5,7 @@
 #include "mmu.h"
 #include "cache.h"
 #include "initramfs.h"
+#include "time.h"
 
 extern unsigned char __kernel_start[];
 extern unsigned char __kernel_end[];
@@ -20,6 +21,8 @@ extern unsigned char initramfs_end[];
 
 void kmain(unsigned long dtb_ptr) {
     uart_init();
+
+    time_init();
 
     uart_write("mona-rpzero aarch64 kernel\n");
 

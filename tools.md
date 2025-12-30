@@ -57,7 +57,7 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | free | Planned | 0 |
 | more | Planned | 0 |
 | seq | Partial | 3 |
-| uptime | Planned | 0 |
+| uptime | Done | 1 |
 | mount | Planned | 0 |
 | sh | Partial | 4 |
 | watch | Planned | 0 |
@@ -67,7 +67,7 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | wc | Partial | 4 |
 | cmp | Planned | 0 |
 | grep | Partial | 7 |
-| sleep | Partial | 1 |
+| sleep | Done | 1 |
 | wget6 | Planned | 0 |
 | col | Planned | 0 |
 | gunzip | Planned | 0 |
@@ -91,7 +91,7 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | hkdf | Planned | 0 |
 | od | Planned | 0 |
 | tail | Planned | 0 |
-| date | Planned | 0 |
+| date | Done | 1 |
 | hostname | Planned | 0 |
 | paste | Planned | 0 |
 | tar | Planned | 0 |
@@ -115,10 +115,15 @@ Notes on current “Partial” implementations:
 - `echo`: prints argv separated by spaces; no flags.
 - `cat`: supports stdin→stdout and a single file argument.
 - `uname`: prints `sysname release machine`; no flags.
-- `sleep`: current binary is a syscall smoke test (fixed `nanosleep` request) rather than a CLI-compatible sleep.
+- `sleep`: accepts `SECONDS` and calls `nanosleep`.
 - `sh`: supports interactive mode, `-c`, and a single `cmd1 | cmd2` pipeline.
 - `init`: system init that starts `/bin/sh`.
 - `kinit`: selftest runner for `make test`.
+
+Time notes:
+
+- `uptime` prints time since boot using `CLOCK_MONOTONIC`.
+- `date` prints a boot-relative “realtime” based on `CLOCK_REALTIME` (currently the kernel returns the same clock as monotonic; no RTC/NTP yet).
 
 ## Extra repo utilities (not in monacc list)
 

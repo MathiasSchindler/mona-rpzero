@@ -4,7 +4,9 @@
 #include "linux_abi.h"
 #include "power.h"
 #include "proc.h"
+#include "sched.h"
 #include "sys_util.h"
+#include "time.h"
 
 uint64_t sys_getuid(void) { return 0; }
 uint64_t sys_geteuid(void) { return 0; }
@@ -131,7 +133,9 @@ uint64_t sys_uname(uint64_t buf_user) {
 
 uint64_t sys_clock_gettime(uint64_t clockid, uint64_t tp_user) {
     /* Support common ids: 0=CLOCK_REALTIME, 1=CLOCK_MONOTONIC.
-     * Return a deterministic zero time for now.
+     *
+     * For now, CLOCK_REALTIME is "boot-relative" (same as monotonic) because
+     * we don't have RTC/NTP yet.
      */
     if (clockid != 0 && clockid != 1) {
         return (uint64_t)(-(int64_t)EINVAL);
@@ -140,16 +144,17 @@ uint64_t sys_clock_gettime(uint64_t clockid, uint64_t tp_user) {
         return (uint64_t)(-(int64_t)EFAULT);
     }
 
+    uint64_t ns = time_now_ns();
     linux_timespec_t ts;
-    ts.tv_sec = 0;
-    ts.tv_nsec = 0;
+    ts.tv_sec = (int64_t)(ns / 1000000000ull);
+    ts.tv_nsec = (int64_t)(ns % 1000000000ull);
     if (write_bytes_to_user(tp_user, &ts, sizeof(ts)) != 0) {
         return (uint64_t)(-(int64_t)EFAULT);
     }
     return 0;
 }
 
-uint64_t sys_nanosleep(uint64_t req_user, uint64_t rem_user) {
+uint64_t sys_nanosleep(trap_frame_t *tf, uint64_t req_user, uint64_t rem_user, uint64_t elr) {
     if (req_user == 0) return (uint64_t)(-(int64_t)EFAULT);
     if (!user_range_ok(req_user, (uint64_t)sizeof(linux_timespec_t))) {
         return (uint64_t)(-(int64_t)EFAULT);
@@ -166,7 +171,17 @@ uint64_t sys_nanosleep(uint64_t req_user, uint64_t rem_user) {
         return (uint64_t)(-(int64_t)EINVAL);
     }
 
-    /* No timer yet: return immediately. If rem is provided, report 0 remaining. */
+    if (req.tv_sec < 0) {
+        return (uint64_t)(-(int64_t)EINVAL);
+    }
+
+    __uint128_t total_ns_128 = (__uint128_t)(uint64_t)req.tv_sec * 1000000000ull + (__uint128_t)(uint64_t)req.tv_nsec;
+    if (total_ns_128 > (__uint128_t)0xFFFFFFFFFFFFFFFFull) {
+        return (uint64_t)(-(int64_t)EINVAL);
+    }
+    uint64_t total_ns = (uint64_t)total_ns_128;
+
+    /* If rem is provided, on successful completion report 0 remaining. */
     if (rem_user != 0) {
         if (!user_range_ok(rem_user, (uint64_t)sizeof(linux_timespec_t))) {
             return (uint64_t)(-(int64_t)EFAULT);
@@ -178,6 +193,41 @@ uint64_t sys_nanosleep(uint64_t req_user, uint64_t rem_user) {
             return (uint64_t)(-(int64_t)EFAULT);
         }
     }
+
+    if (total_ns == 0) {
+        return 0;
+    }
+
+    proc_t *cur = &g_procs[g_cur_proc];
+    uint64_t now = time_now_ns();
+    uint64_t deadline = now + total_ns;
+    if (deadline < now) {
+        deadline = 0xFFFFFFFFFFFFFFFFull;
+    }
+
+    /* Save current state and mark the task sleeping. When it resumes, nanosleep
+     * should return 0.
+     */
+    tf_copy(&cur->tf, tf);
+    cur->elr = elr;
+    cur->tf.x[0] = 0;
+    cur->state = PROC_SLEEPING;
+    cur->sleep_deadline_ns = deadline;
+
+    int next = sched_pick_next_runnable();
+    if (next >= 0 && next != g_cur_proc) {
+        proc_switch_to(next, tf);
+        return SYSCALL_SWITCHED;
+    }
+
+    /* No other runnable tasks; sched_pick_next_runnable may have waited for our
+     * own deadline and woken us. Ensure we're runnable again and return.
+     */
+    if (cur->state == PROC_SLEEPING) {
+        cur->state = PROC_RUNNABLE;
+        cur->sleep_deadline_ns = 0;
+    }
+
     return 0;
 }
 

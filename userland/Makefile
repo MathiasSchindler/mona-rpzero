@@ -41,9 +41,10 @@ USER_BASE ?= 0x0000000000400000
 
 
 
+
 .PHONY: all clean check-toolchain check-nolibc initramfs
 
-all: check-nolibc $(BUILD)/echo.bin $(BUILD)/true.bin $(BUILD)/false.bin $(BUILD)/cat.bin $(BUILD)/ls.bin $(BUILD)/pwd.bin $(BUILD)/pid.bin $(BUILD)/uname.bin $(BUILD)/mkdir.bin $(BUILD)/touch.bin $(BUILD)/rm.bin $(BUILD)/rmdir.bin $(BUILD)/seq.bin $(BUILD)/uniq.bin $(BUILD)/wc.bin $(BUILD)/grep.bin $(BUILD)/ps.bin $(BUILD)/kill.bin $(BUILD)/pstree.bin $(BUILD)/find.bin $(BUILD)/brk.bin $(BUILD)/mmap.bin $(BUILD)/cwd.bin $(BUILD)/tty.bin $(BUILD)/sleep.bin $(BUILD)/compat.bin $(BUILD)/kinit.bin $(BUILD)/sh.bin $(BUILD)/init.bin
+all: check-nolibc $(BUILD)/echo.bin $(BUILD)/true.bin $(BUILD)/false.bin $(BUILD)/cat.bin $(BUILD)/ls.bin $(BUILD)/pwd.bin $(BUILD)/pid.bin $(BUILD)/uname.bin $(BUILD)/mkdir.bin $(BUILD)/touch.bin $(BUILD)/rm.bin $(BUILD)/rmdir.bin $(BUILD)/seq.bin $(BUILD)/uniq.bin $(BUILD)/wc.bin $(BUILD)/grep.bin $(BUILD)/ps.bin $(BUILD)/kill.bin $(BUILD)/pstree.bin $(BUILD)/find.bin $(BUILD)/brk.bin $(BUILD)/mmap.bin $(BUILD)/cwd.bin $(BUILD)/tty.bin $(BUILD)/sleep.bin $(BUILD)/date.bin $(BUILD)/uptime.bin $(BUILD)/compat.bin $(BUILD)/kinit.bin $(BUILD)/sh.bin $(BUILD)/init.bin
 
 initramfs: $(BUILD)/initramfs.cpio
 
@@ -152,6 +153,12 @@ $(BUILD)/tty.o: src/tty.c include/syscall.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/sleep.o: src/sleep.c include/syscall.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/date.o: src/date.c include/syscall.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/uptime.o: src/uptime.c include/syscall.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/compat.o: src/compat.c include/syscall.h | $(BUILD)
@@ -266,6 +273,14 @@ $(BUILD)/sleep.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(
 	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
 	$(POSTLINK)
 
+$(BUILD)/date.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/date.o | check-toolchain
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
+
+$(BUILD)/uptime.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/uptime.o | check-toolchain
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
+
 $(BUILD)/compat.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/compat.o | check-toolchain
 	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
 	$(POSTLINK)
@@ -357,6 +372,12 @@ $(BUILD)/tty.bin: $(BUILD)/tty.elf | check-toolchain
 $(BUILD)/sleep.bin: $(BUILD)/sleep.elf | check-toolchain
 	$(OBJCOPY) -O binary $< $@
 
+$(BUILD)/date.bin: $(BUILD)/date.elf | check-toolchain
+	$(OBJCOPY) -O binary $< $@
+
+$(BUILD)/uptime.bin: $(BUILD)/uptime.elf | check-toolchain
+	$(OBJCOPY) -O binary $< $@
+
 $(BUILD)/compat.bin: $(BUILD)/compat.elf | check-toolchain
 	$(OBJCOPY) -O binary $< $@
 
@@ -400,6 +421,8 @@ $(BUILD)/initramfs.cpio: $(TOOLS_DIR)/mkcpio_newc.py all | $(BUILD)
 	@cp "$(BUILD)/cwd.elf"  "$(INITRAMFS_ROOT)/bin/cwd"
 	@cp "$(BUILD)/tty.elf"  "$(INITRAMFS_ROOT)/bin/tty"
 	@cp "$(BUILD)/sleep.elf"  "$(INITRAMFS_ROOT)/bin/sleep"
+	@cp "$(BUILD)/date.elf"  "$(INITRAMFS_ROOT)/bin/date"
+	@cp "$(BUILD)/uptime.elf"  "$(INITRAMFS_ROOT)/bin/uptime"
 	@cp "$(BUILD)/compat.elf"  "$(INITRAMFS_ROOT)/bin/compat"
 	@cp "$(BUILD)/kinit.elf"  "$(INITRAMFS_ROOT)/bin/kinit"
 	@cp "$(BUILD)/sh.elf"   "$(INITRAMFS_ROOT)/bin/sh"

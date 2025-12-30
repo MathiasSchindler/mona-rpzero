@@ -240,7 +240,12 @@ uint64_t exception_handle(trap_frame_t *tf,
             break;
 
         case __NR_nanosleep:
-            ret = sys_nanosleep(a0, a1);
+            ret = sys_nanosleep(tf, a0, a1, elr);
+            if (ret == SYSCALL_SWITCHED) {
+                /* sys_nanosleep already switched contexts. */
+                tf_copy(&g_procs[g_cur_proc].tf, tf);
+                return 1;
+            }
             break;
 
         case __NR_chdir:

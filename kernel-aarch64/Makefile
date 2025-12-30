@@ -35,6 +35,7 @@ OBJS := \
 	$(BUILD)/arch/enter_el0.o \
 	$(BUILD)/main.o \
 	$(BUILD)/exceptions.o \
+	$(BUILD)/time.o \
 	$(BUILD)/power.o \
 	$(BUILD)/sys_util.o \
 	$(BUILD)/sys_misc.o \
@@ -112,6 +113,9 @@ $(BUILD)/initramfs.o: initramfs.c include/initramfs.h include/cpio_newc.h $(CONF
 
 
 $(BUILD)/exceptions.o: exceptions.c include/exceptions.h include/errno.h include/syscalls.h include/proc.h include/sched.h include/uart_pl011.h $(CONFIG_STAMP) | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/time.o: time.c include/time.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/power.o: power.c include/power.h include/errno.h include/uart_pl011.h $(CONFIG_STAMP) | $(BUILD)
