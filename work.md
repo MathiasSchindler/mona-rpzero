@@ -24,44 +24,6 @@ This document is an actionable work plan for this repo’s **bare-metal AArch64 
 
 These items reduce duplication and semantic drift. They are low-risk and increase confidence.
 
-### P0.1 Unify path/parent parsing logic in the kernel
-
-**Why**: `mkdirat/linkat/symlinkat` each re-implement “strip leading slashes, trim trailing slashes, find parent, verify parent is dir”. Duplication is a common source of subtle bugs and inconsistent errno.
-
-**Target files**:
-- `kernel-aarch64/sys_fs.c`
-- (possibly) `kernel-aarch64/sys_util.c` (good home for shared helpers)
-
-**Implementation guide**:
-- Introduce helpers that operate on:
-  - absolute path `"/a/b/c"`,
-  - and/or normalized no-leading-slash path `"a/b/c"`.
-- Suggested helpers:
-  - `int path_parent_no_slash(const char *path_no_slash, char *parent_out, uint64_t cap)`
-  - `int path_basename_no_slash(const char *path_no_slash, char *name_out, uint64_t cap)`
-  - `int ensure_parent_dir_exists(const char *abs_path)`
-
-**Acceptance**:
-- `make test` unchanged.
-- Add 1–2 small `kinit` checks around edge cases:
-  - `mkdir /tmp/x/` works (or fails consistently),
-  - `ln -s /uniq.txt /tmp/sy` still works.
-
-### P0.2 Centralize file type/mode constants
-
-**Why**: Mode bits appear in multiple places and some are ad-hoc.
-
-**Target files**:
-- New: `kernel-aarch64/include/stat_bits.h` (or similar)
-- Update: `kernel-aarch64/sys_fs.c`, `kernel-aarch64/vfs.c`, and any other file that hardcodes `0170000u`, `0100000u`, `0040000u`.
-
-**Implementation guide**:
-- Define `S_IFMT`, `S_IFREG`, `S_IFDIR`, `S_IFLNK`, etc.
-- Keep it tiny and internal (not “POSIX complete”).
-
-**Acceptance**:
-- `make test`.
-
 ### P0.3 Reduce syscall-number drift between kernel and userland
 
 **Why**: syscall numbers are duplicated in `kernel-aarch64/exceptions.c` and `userland/include/syscall.h`.
@@ -204,3 +166,10 @@ This is about shrinking the QEMU→hardware gap with measurable steps.
    - Small diff, big long-term payoff.
 2) **P1.1** (symlink errno + execve follow)
    - Improves compatibility and reduces surprises.
+
+---
+
+## Completed
+
+- 2025-12-30: Unify path/parent parsing via `abs_path_to_no_slash_trim()` and `abs_path_parent_dir()` in [kernel-aarch64/sys_util.c](kernel-aarch64/sys_util.c) and [kernel-aarch64/include/sys_util.h](kernel-aarch64/include/sys_util.h).
+- 2025-12-30: Centralize file type/mode bits in [kernel-aarch64/include/stat_bits.h](kernel-aarch64/include/stat_bits.h) and update callers.

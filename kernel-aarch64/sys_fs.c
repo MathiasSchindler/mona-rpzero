@@ -7,6 +7,7 @@
 #include "pipe.h"
 #include "proc.h"
 #include "sys_util.h"
+#include "stat_bits.h"
 #include "uart_pl011.h"
 #include "vfs.h"
 
@@ -23,10 +24,6 @@
 
 /* unlinkat(2) flags (subset). */
 #define AT_REMOVEDIR 0x200u
-
-/* mode bits */
-#define S_IFMT 0170000u
-#define S_IFLNK 0120000u
 
 #define MAX_SYMLINK_HOPS 8
 
@@ -167,7 +164,7 @@ uint64_t sys_chdir(uint64_t path_user) {
     if (vfs_lookup_abs(path, &data, &size, &mode) != 0) {
         return (uint64_t)(-(int64_t)ENOENT);
     }
-    if ((mode & 0170000u) != 0040000u) {
+        if (!S_ISDIR(mode)) {
         return (uint64_t)(-(int64_t)ENOTDIR);
     }
 
@@ -232,7 +229,7 @@ uint64_t sys_symlinkat(uint64_t target_user, int64_t newdirfd, uint64_t linkpath
     if (vfs_lookup_abs(parent_abs, 0, 0, &pmode) != 0) {
         return (uint64_t)(-(int64_t)ENOENT);
     }
-    if ((pmode & 0170000u) != 0040000u) {
+    if (!S_ISDIR(pmode)) {
         return (uint64_t)(-(int64_t)ENOTDIR);
     }
 
@@ -316,12 +313,12 @@ uint64_t sys_mkdirat(int64_t dirfd, uint64_t pathname_user, uint64_t mode) {
     if (vfs_lookup_abs(parent_abs, 0, 0, &pmode) != 0) {
         return (uint64_t)(-(int64_t)ENOENT);
     }
-    if ((pmode & 0170000u) != 0040000u) {
+    if (!S_ISDIR(pmode)) {
         return (uint64_t)(-(int64_t)ENOTDIR);
     }
 
     uint64_t m = mode & 0777u;
-    int rc = vfs_ramdir_create(p, 0040000u | (uint32_t)m);
+    int rc = vfs_ramdir_create(p, S_IFDIR | (uint32_t)m);
     if (rc != 0) {
         return (uint64_t)(int64_t)rc;
     }
@@ -380,7 +377,7 @@ uint64_t sys_linkat(int64_t olddirfd, uint64_t oldpath_user, int64_t newdirfd, u
     if (vfs_lookup_abs(old_abs, 0, 0, &old_mode) != 0) {
         return (uint64_t)(-(int64_t)ENOENT);
     }
-    if ((old_mode & 0170000u) == 0040000u) {
+    if (S_ISDIR(old_mode)) {
         /* Hardlinking directories is forbidden. */
         return (uint64_t)(-(int64_t)EPERM);
     }
@@ -409,7 +406,7 @@ uint64_t sys_linkat(int64_t olddirfd, uint64_t oldpath_user, int64_t newdirfd, u
     if (vfs_lookup_abs(parent_abs, 0, 0, &pmode) != 0) {
         return (uint64_t)(-(int64_t)ENOENT);
     }
-    if ((pmode & 0170000u) != 0040000u) {
+    if (!S_ISDIR(pmode)) {
         return (uint64_t)(-(int64_t)ENOTDIR);
     }
 
@@ -615,11 +612,11 @@ uint64_t sys_openat(int64_t dirfd, uint64_t pathname_user, uint64_t flags, uint6
         if (vfs_lookup_abs(parent_abs, 0, 0, &pmode) != 0) {
             return (uint64_t)(-(int64_t)ENOENT);
         }
-        if ((pmode & 0170000u) != 0040000u) {
+        if (!S_ISDIR(pmode)) {
             return (uint64_t)(-(int64_t)ENOTDIR);
         }
 
-        uint32_t file_mode = 0100000u | (uint32_t)(mode & 0777u);
+        uint32_t file_mode = S_IFREG | (uint32_t)(mode & 0777u);
         int crc = vfs_ramfile_create(p, file_mode);
         if (crc != 0) {
             return (uint64_t)(int64_t)crc;
@@ -655,7 +652,7 @@ uint64_t sys_openat(int64_t dirfd, uint64_t pathname_user, uint64_t flags, uint6
     }
 
     /* Initramfs is read-only: reject opens requesting write access. */
-    if ((imode & 0170000u) == 0100000u) {
+    if (S_ISREG(imode)) {
         uint64_t acc = flags & (uint64_t)O_ACCMODE;
         if (acc == (uint64_t)O_WRONLY || acc == (uint64_t)O_RDWR) {
             return (uint64_t)(-(int64_t)EROFS);
@@ -675,7 +672,7 @@ uint64_t sys_openat(int64_t dirfd, uint64_t pathname_user, uint64_t flags, uint6
     d->u.initramfs.size = size;
     d->u.initramfs.off = 0;
     d->u.initramfs.mode = imode;
-    d->u.initramfs.is_dir = ((imode & 0170000u) == 0040000u) ? 1u : 0u;
+    d->u.initramfs.is_dir = S_ISDIR(imode) ? 1u : 0u;
     d->u.initramfs.dir_path[0] = '\0';
     if (d->u.initramfs.is_dir) {
         /* Store normalized path (leading slashes stripped, "/" -> ""). */
@@ -925,8 +922,8 @@ static int dents_emit_cb(const char *name, uint32_t mode, void *ctx) {
     *(volatile uint16_t *)(uintptr_t)(dst + 16) = (uint16_t)reclen;
     /* d_type */
     uint8_t dtype = LINUX_DT_UNKNOWN;
-    if ((mode & 0170000u) == 0040000u) dtype = LINUX_DT_DIR;
-    else if ((mode & 0170000u) == 0100000u) dtype = LINUX_DT_REG;
+    if (S_ISDIR(mode)) dtype = LINUX_DT_DIR;
+    else if (S_ISREG(mode)) dtype = LINUX_DT_REG;
     *(volatile uint8_t *)(uintptr_t)(dst + 18) = dtype;
 
     /* name */
@@ -963,9 +960,9 @@ uint64_t sys_getdents64(uint64_t fd, uint64_t dirp_user, uint64_t count) {
         dc.buf_len = count;
         dc.pos = 0;
 
-        (void)dents_emit_cb(".", 0040000u, &dc);
-        (void)dents_emit_cb("..", 0040000u, &dc);
-        (void)dents_emit_cb("ps", 0100000u, &dc);
+        (void)dents_emit_cb(".", S_IFDIR, &dc);
+        (void)dents_emit_cb("..", S_IFDIR, &dc);
+        (void)dents_emit_cb("ps", S_IFREG, &dc);
 
         if (dc.emitted > dc.skip) {
             d->u.proc.off = dc.emitted;
@@ -1209,14 +1206,14 @@ uint64_t sys_newfstatat(int64_t dirfd, uint64_t pathname_user, uint64_t statbuf_
 
     if (cstr_eq_u64(path, "/proc") || cstr_eq_u64(path, "/proc/")) {
         linux_stat_t *st = (linux_stat_t *)(uintptr_t)statbuf_user;
-        st->st_mode = 0040000u | 0555u;
+        st->st_mode = S_IFDIR | 0555u;
         st->st_nlink = 1;
         st->st_size = 0;
         return 0;
     }
     if (cstr_eq_u64(path, "/proc/ps")) {
         linux_stat_t *st = (linux_stat_t *)(uintptr_t)statbuf_user;
-        st->st_mode = 0100000u | 0444u;
+        st->st_mode = S_IFREG | 0444u;
         st->st_nlink = 1;
         st->st_size = 0;
         return 0;
@@ -1339,7 +1336,7 @@ uint64_t sys_unlinkat(int64_t dirfd, uint64_t pathname_user, uint64_t flags) {
         /* If it exists but is not a removable overlay dir, translate errors. */
         uint32_t mode = 0;
         if (vfs_lookup_abs(abs_path, 0, 0, &mode) == 0) {
-            if ((mode & 0170000u) != 0040000u) {
+            if (!S_ISDIR(mode)) {
                 return (uint64_t)(-(int64_t)ENOTDIR);
             }
             return (uint64_t)(-(int64_t)EROFS);
@@ -1353,7 +1350,7 @@ uint64_t sys_unlinkat(int64_t dirfd, uint64_t pathname_user, uint64_t flags) {
     /* If it exists but is not a ramfile, reject (read-only initramfs or directory). */
     uint32_t mode = 0;
     if (vfs_lookup_abs(abs_path, 0, 0, &mode) == 0) {
-        if ((mode & 0170000u) == 0040000u) {
+        if (S_ISDIR(mode)) {
             return (uint64_t)(-(int64_t)EISDIR);
         }
         return (uint64_t)(-(int64_t)EROFS);

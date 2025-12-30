@@ -1,6 +1,7 @@
 #include "vfs.h"
 
 #include "errno.h"
+#include "stat_bits.h"
 #include "stdint.h"
 
 enum {
@@ -151,7 +152,7 @@ int vfs_lookup_abs(const char *abs_path, const uint8_t **out_data, uint64_t *out
     if (cstr_eq_u64(abs_path, "/")) {
         if (out_data) *out_data = 0;
         if (out_size) *out_size = 0;
-        if (out_mode) *out_mode = 0040000u | 0755u;
+        if (out_mode) *out_mode = S_IFDIR | 0755u;
         return 0;
     }
 
@@ -159,7 +160,7 @@ int vfs_lookup_abs(const char *abs_path, const uint8_t **out_data, uint64_t *out
     if (!p || *p == '\0') {
         if (out_data) *out_data = 0;
         if (out_size) *out_size = 0;
-        if (out_mode) *out_mode = 0040000u | 0755u;
+        if (out_mode) *out_mode = S_IFDIR | 0755u;
         return 0;
     }
 
@@ -249,7 +250,7 @@ int vfs_list_dir(const char *dir_path_no_slash, initramfs_dir_cb_t cb, void *ctx
 
     uint32_t mode = 0;
     if (vfs_lookup_abs(abs, 0, 0, &mode) != 0) return -1;
-    if ((mode & 0170000u) != 0040000u) return -1;
+    if (!S_ISDIR(mode)) return -1;
 
     vfs_list_ctx_t vc;
     vc.cb = cb;
@@ -295,7 +296,7 @@ int vfs_list_dir(const char *dir_path_no_slash, initramfs_dir_cb_t cb, void *ctx
         if (clen == 0) continue;
 
         /* Determine mode for this immediate child: look up exact child path if present. */
-        uint32_t child_mode = 0040000u | 0755u;
+        uint32_t child_mode = S_IFDIR | 0755u;
         {
             char child_full[MAX_PATH];
             uint64_t o = 0;

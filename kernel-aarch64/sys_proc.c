@@ -11,6 +11,7 @@
 #include "proc.h"
 #include "regs.h"
 #include "sched.h"
+#include "stat_bits.h"
 #include "sys_util.h"
 #include "uart_pl011.h"
 
@@ -289,7 +290,7 @@ uint64_t sys_execve(trap_frame_t *tf, uint64_t pathname_user, uint64_t argv_user
     if (initramfs_lookup(path, &img, &img_size, &mode) != 0) {
         return (uint64_t)(-(int64_t)ENOENT);
     }
-    if ((mode & 0170000u) == 0040000u) {
+    if (S_ISDIR(mode)) {
         return (uint64_t)(-(int64_t)EISDIR);
     }
 

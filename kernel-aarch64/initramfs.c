@@ -1,5 +1,6 @@
 #include "initramfs.h"
 #include "cpio_newc.h"
+#include "stat_bits.h"
 
 static const void *g_archive;
 static size_t g_archive_size;
@@ -18,7 +19,7 @@ static int str_eq(const char *a, const char *b) {
 
 static uint32_t root_dir_mode(void) {
     /* S_IFDIR | 0755 */
-    return 0040000u | 0755u;
+    return S_IFDIR | 0755u;
 }
 
 void initramfs_init(const void *archive, size_t archive_size) {
@@ -94,7 +95,7 @@ static void seen_add(list_ctx_t *lc, const char *name, uint32_t len) {
 
 static uint32_t infer_child_mode(const cpio_entry_t *e, uint32_t child_is_dir) {
     if (child_is_dir) {
-        return 0040000u | 0755u;
+        return S_IFDIR | 0755u;
     }
     return e->mode;
 }

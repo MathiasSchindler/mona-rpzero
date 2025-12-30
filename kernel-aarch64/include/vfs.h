@@ -1,6 +1,7 @@
 #pragma once
 
 #include "initramfs.h"
+#include "stat_bits.h"
 #include "stdint.h"
 
 /* initramfs + overlay VFS helpers.
@@ -19,7 +20,7 @@ int vfs_list_dir(const char *dir_path_no_slash, initramfs_dir_cb_t cb, void *ctx
 
 /* Create a directory entry in the in-memory overlay.
  * path_no_slash must be normalized, no leading slash, no trailing slash.
- * mode should include S_IFDIR bits (e.g. 0040000|0755).
+ * mode should include S_IFDIR bits (e.g. S_IFDIR|0755).
  * Returns 0 on success, or -errno.
  */
 int vfs_ramdir_create(const char *path_no_slash, uint32_t mode);
@@ -29,7 +30,7 @@ int vfs_ramdir_remove(const char *path_no_slash);
 
 /* Regular file entries in the in-memory overlay.
  * path_no_slash must be normalized, no leading slash, no trailing slash.
- * mode should include S_IFREG bits (e.g. 0100000|0644).
+ * mode should include S_IFREG bits (e.g. S_IFREG|0644).
  */
 int vfs_ramfile_create(const char *path_no_slash, uint32_t mode);
 int vfs_ramfile_unlink(const char *path_no_slash);
