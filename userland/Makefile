@@ -40,9 +40,10 @@ USER_BASE ?= 0x0000000000400000
 
 
 
+
 .PHONY: all clean check-toolchain check-nolibc initramfs
 
-all: check-nolibc $(BUILD)/echo.bin $(BUILD)/true.bin $(BUILD)/false.bin $(BUILD)/cat.bin $(BUILD)/ls.bin $(BUILD)/pwd.bin $(BUILD)/pid.bin $(BUILD)/uname.bin $(BUILD)/mkdir.bin $(BUILD)/touch.bin $(BUILD)/rm.bin $(BUILD)/rmdir.bin $(BUILD)/seq.bin $(BUILD)/uniq.bin $(BUILD)/wc.bin $(BUILD)/grep.bin $(BUILD)/brk.bin $(BUILD)/mmap.bin $(BUILD)/cwd.bin $(BUILD)/tty.bin $(BUILD)/sleep.bin $(BUILD)/compat.bin $(BUILD)/sh.bin $(BUILD)/init.bin
+all: check-nolibc $(BUILD)/echo.bin $(BUILD)/true.bin $(BUILD)/false.bin $(BUILD)/cat.bin $(BUILD)/ls.bin $(BUILD)/pwd.bin $(BUILD)/pid.bin $(BUILD)/uname.bin $(BUILD)/mkdir.bin $(BUILD)/touch.bin $(BUILD)/rm.bin $(BUILD)/rmdir.bin $(BUILD)/seq.bin $(BUILD)/uniq.bin $(BUILD)/wc.bin $(BUILD)/grep.bin $(BUILD)/brk.bin $(BUILD)/mmap.bin $(BUILD)/cwd.bin $(BUILD)/tty.bin $(BUILD)/sleep.bin $(BUILD)/compat.bin $(BUILD)/kinit.bin $(BUILD)/sh.bin $(BUILD)/init.bin
 
 initramfs: $(BUILD)/initramfs.cpio
 
@@ -147,6 +148,9 @@ $(BUILD)/compat.o: src/compat.c include/syscall.h | $(BUILD)
 $(BUILD)/init.o: src/init.c include/syscall.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(BUILD)/kinit.o: src/kinit.c include/syscall.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
 $(BUILD)/sh.o: src/sh.c include/syscall.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -238,6 +242,10 @@ $(BUILD)/compat.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $
 	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
 	$(POSTLINK)
 
+$(BUILD)/kinit.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/kinit.o | check-toolchain
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
+
 $(BUILD)/init.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/init.o | check-toolchain
 	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
 	$(POSTLINK)
@@ -312,6 +320,9 @@ $(BUILD)/sleep.bin: $(BUILD)/sleep.elf | check-toolchain
 $(BUILD)/compat.bin: $(BUILD)/compat.elf | check-toolchain
 	$(OBJCOPY) -O binary $< $@
 
+$(BUILD)/kinit.bin: $(BUILD)/kinit.elf | check-toolchain
+	$(OBJCOPY) -O binary $< $@
+
 $(BUILD)/init.bin: $(BUILD)/init.elf | check-toolchain
 	$(OBJCOPY) -O binary $< $@
 
@@ -344,6 +355,7 @@ $(BUILD)/initramfs.cpio: $(TOOLS_DIR)/mkcpio_newc.py all | $(BUILD)
 	@cp "$(BUILD)/tty.elf"  "$(INITRAMFS_ROOT)/bin/tty"
 	@cp "$(BUILD)/sleep.elf"  "$(INITRAMFS_ROOT)/bin/sleep"
 	@cp "$(BUILD)/compat.elf"  "$(INITRAMFS_ROOT)/bin/compat"
+	@cp "$(BUILD)/kinit.elf"  "$(INITRAMFS_ROOT)/bin/kinit"
 	@cp "$(BUILD)/sh.elf"   "$(INITRAMFS_ROOT)/bin/sh"
 	@cp "$(BUILD)/init.elf" "$(INITRAMFS_ROOT)/init"
 	python3 $(TOOLS_DIR)/mkcpio_newc.py --root "$(INITRAMFS_ROOT)" --out $@

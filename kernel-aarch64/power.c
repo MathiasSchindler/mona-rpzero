@@ -6,7 +6,7 @@
 /* PSCI 0.2+ system off (SMC) */
 #define PSCI_FN_SYSTEM_OFF 0x84000008ull
 
-__attribute__((noreturn)) void kernel_poweroff(void) {
+__attribute__((noreturn)) void kernel_poweroff_with_code(uint32_t code) {
 #ifdef QEMU_SEMIHOSTING
     /* QEMU semihosting: request the emulator to exit.
      * Requires QEMU to be started with -semihosting.
@@ -15,7 +15,7 @@ __attribute__((noreturn)) void kernel_poweroff(void) {
     struct {
         uint32_t reason;
         uint32_t subcode;
-    } args = {0x20026u, 0u}; /* ADP_Stopped_ApplicationExit */
+    } args = {0x20026u, code}; /* ADP_Stopped_ApplicationExit */
 
     register uint64_t x0 __asm__("x0") = 0x20ull; /* SYS_EXIT_EXTENDED */
     register void *x1 __asm__("x1") = &args;
@@ -41,6 +41,10 @@ __attribute__((noreturn)) void kernel_poweroff(void) {
     }
 }
 
+__attribute__((noreturn)) void kernel_poweroff(void) {
+    kernel_poweroff_with_code(0);
+}
+
 uint64_t sys_reboot(uint64_t magic1, uint64_t magic2, uint64_t cmd, uint64_t arg) {
     (void)magic1;
     (void)magic2;
@@ -49,7 +53,7 @@ uint64_t sys_reboot(uint64_t magic1, uint64_t magic2, uint64_t cmd, uint64_t arg
     /* Minimal support: power off for now. */
     const uint64_t LINUX_REBOOT_CMD_POWER_OFF = 0x4321fedcull;
     if (cmd == LINUX_REBOOT_CMD_POWER_OFF) {
-        kernel_poweroff();
+        kernel_poweroff_with_code((uint32_t)(arg & 0xffu));
     }
 
     return (uint64_t)(-(int64_t)EINVAL);

@@ -691,7 +691,7 @@ int handle_exit_and_maybe_switch(trap_frame_t *tf, uint64_t code) {
         uart_write("\n[el0] exit_group status=");
         uart_write_hex_u64(code);
         uart_write("\n");
-        kernel_poweroff();
+        kernel_poweroff_with_code((uint32_t)(code & 0xffu));
     }
 
     int cidx = g_cur_proc;

@@ -22,7 +22,7 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | Tool | Status | Flags/Features (#) |
 |---|---:|---:|
 | dmesg | Planned | 0 |
-| kinit | Planned | 0 |
+| kinit | Done | 1 |
 | pstree | Planned | 0 |
 | time | Planned | 0 |
 | awk | Planned | 0 |

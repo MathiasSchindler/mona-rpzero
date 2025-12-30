@@ -4,6 +4,7 @@
 #   make clean  - remove all build artifacts
 #   make        - build bare-metal kernel + userland
 #   make run    - boot bare-metal kernel in QEMU
+#   make test   - boot bare-metal kernel in QEMU, run selftests, exit
 
 SHELL := /usr/bin/env bash
 
@@ -27,8 +28,8 @@ MEM ?= 1024
 USERPROG ?= init
 
 
-.PHONY: all run clean
-.PHONY: aarch64-kernel run-aarch64 userland
+.PHONY: all run test clean
+.PHONY: aarch64-kernel run-aarch64 test-aarch64 userland
 
 all: aarch64-kernel
 
@@ -60,12 +61,24 @@ run-aarch64: aarch64-kernel
 	@# Enable semihosting-powered `poweroff` for QEMU runs.
 	@$(MAKE) -C "$(AARCH64_DIR)" CROSS="$(AARCH64_CROSS)" clean
 	@$(MAKE) -C "$(AARCH64_DIR)" CROSS="$(AARCH64_CROSS)" USERPROG="$(USERPROG)" KERNEL_DEFS="-DQEMU_SEMIHOSTING" all
-	@bash tools/run-qemu-raspi3b.sh \
-		--kernel "$(AARCH64_IMG)" \
-		--dtb "$(DTB)" \
-		--mem "$(MEM)"
+	@set +e; bash tools/run-qemu-raspi3b.sh --kernel "$(AARCH64_IMG)" --dtb "$(DTB)" --mem "$(MEM)"; rc=$$?; if [[ $$rc -eq 0 || $$rc -eq 128 ]]; then exit 0; fi; exit $$rc
 
 run: run-aarch64
+
+test:
+	@$(MAKE) USERPROG=kinit test-aarch64
+
+test-aarch64: userland
+	@echo "Starting QEMU (raspi3b) selftests"
+	@if [[ -z "$(DTB)" ]]; then \
+		echo "No DTB found. Put one into out/ or archive/, or pass DTB=..." >&2; \
+		echo "Tried: $(DTB_CANDIDATES)" >&2; \
+		exit 2; \
+	fi
+	@# Enable semihosting-powered exit codes for QEMU tests.
+	@$(MAKE) -C "$(AARCH64_DIR)" CROSS="$(AARCH64_CROSS)" clean
+	@$(MAKE) -C "$(AARCH64_DIR)" CROSS="$(AARCH64_CROSS)" USERPROG="$(USERPROG)" KERNEL_DEFS="-DQEMU_SEMIHOSTING" all
+	@set +e; bash tools/run-qemu-raspi3b.sh --kernel "$(AARCH64_IMG)" --dtb "$(DTB)" --mem "$(MEM)"; rc=$$?; if [[ $$rc -eq 0 || $$rc -eq 128 ]]; then exit 0; fi; exit $$rc
 
 clean:
 	@rm -rf "$(AARCH64_DIR)/build" "$(USERLAND_DIR)/build"
