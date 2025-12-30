@@ -24,6 +24,85 @@
 /* unlinkat(2) flags (subset). */
 #define AT_REMOVEDIR 0x200u
 
+/* mode bits */
+#define S_IFMT 0170000u
+#define S_IFLNK 0120000u
+
+#define MAX_SYMLINK_HOPS 8
+
+static int follow_symlink_data(const char *link_abs, const uint8_t *tgt, uint64_t tgt_len, char *out_abs, uint64_t outsz) {
+    if (!link_abs || !tgt || !out_abs || outsz == 0) return -1;
+
+    /* Copy target into a temporary NUL-terminated buffer. */
+    char target[MAX_PATH];
+    if (tgt_len + 1 > sizeof(target)) return -1;
+    for (uint64_t i = 0; i < tgt_len; i++) target[i] = (char)tgt[i];
+    target[tgt_len] = '\0';
+
+    /* Determine parent directory of link_abs. */
+    char parent[MAX_PATH];
+    {
+        uint64_t n = cstr_len_u64(link_abs);
+        if (n + 1 > sizeof(parent)) return -1;
+        for (uint64_t i = 0; i <= n; i++) parent[i] = link_abs[i];
+
+        int last = -1;
+        for (uint64_t i = 0; parent[i] != '\0'; i++) {
+            if (parent[i] == '/') last = (int)i;
+        }
+        if (last < 0) return -1;
+        if (last == 0) {
+            parent[0] = '/';
+            parent[1] = '\0';
+        } else {
+            parent[last] = '\0';
+        }
+    }
+
+    if (target[0] == '/') {
+        return normalize_abs_path(target, out_abs, outsz);
+    }
+
+    char tmp[MAX_PATH];
+    uint64_t pn = cstr_len_u64(parent);
+    uint64_t tn = cstr_len_u64(target);
+    uint64_t o = 0;
+    if (pn == 0) return -1;
+    if (pn + 1 + tn + 1 > sizeof(tmp)) return -1;
+    for (uint64_t i = 0; i < pn; i++) tmp[o++] = parent[i];
+    if (o == 0 || tmp[o - 1] != '/') tmp[o++] = '/';
+    for (uint64_t i = 0; i < tn; i++) tmp[o++] = target[i];
+    tmp[o] = '\0';
+    return normalize_abs_path(tmp, out_abs, outsz);
+}
+
+static int resolve_final_symlink(char *abs_io, uint64_t cap) {
+    if (!abs_io || cap == 0) return -1;
+
+    for (int hop = 0; hop < MAX_SYMLINK_HOPS; hop++) {
+        const uint8_t *data = 0;
+        uint64_t size = 0;
+        uint32_t mode = 0;
+        if (vfs_lookup_abs(abs_io, &data, &size, &mode) != 0) {
+            return 0;
+        }
+        if ((mode & S_IFMT) != S_IFLNK) {
+            return 0;
+        }
+
+        char next[MAX_PATH];
+        if (follow_symlink_data(abs_io, data, size, next, sizeof(next)) != 0) {
+            return -1;
+        }
+
+        uint64_t n = cstr_len_u64(next);
+        if (n + 1 > cap) return -1;
+        for (uint64_t i = 0; i <= n; i++) abs_io[i] = next[i];
+    }
+
+    return -1;
+}
+
 /* /proc helpers (used by /proc/ps). */
 static char proc_state_char(proc_state_t st) {
     switch (st) {
@@ -94,6 +173,10 @@ uint64_t sys_chdir(uint64_t path_user) {
         return (uint64_t)(-(int64_t)EINVAL);
     }
 
+    if (resolve_final_symlink(path, sizeof(path)) != 0) {
+        return (uint64_t)(-(int64_t)EINVAL);
+    }
+
     const uint8_t *data = 0;
     uint64_t size = 0;
     uint32_t mode = 0;
@@ -110,6 +193,118 @@ uint64_t sys_chdir(uint64_t path_user) {
     }
     for (uint64_t i = 0; i <= n; i++) {
         cur->cwd[i] = path[i];
+    }
+    return 0;
+}
+
+uint64_t sys_symlinkat(uint64_t target_user, int64_t newdirfd, uint64_t linkpath_user) {
+    if (newdirfd != AT_FDCWD) {
+        return (uint64_t)(-(int64_t)ENOSYS);
+    }
+    if (target_user == 0 || linkpath_user == 0) {
+        return (uint64_t)(-(int64_t)EFAULT);
+    }
+
+    char target_in[MAX_PATH];
+    if (copy_cstr_from_user(target_in, sizeof(target_in), target_user) != 0) {
+        return (uint64_t)(-(int64_t)EFAULT);
+    }
+    char link_in[MAX_PATH];
+    if (copy_cstr_from_user(link_in, sizeof(link_in), linkpath_user) != 0) {
+        return (uint64_t)(-(int64_t)EFAULT);
+    }
+
+    proc_t *cur = &g_procs[g_cur_proc];
+
+    char link_abs[MAX_PATH];
+    if (resolve_path(cur, link_in, link_abs, sizeof(link_abs)) != 0) {
+        return (uint64_t)(-(int64_t)EINVAL);
+    }
+
+    if (cstr_eq_u64(link_abs, "/")) {
+        return (uint64_t)(-(int64_t)EPERM);
+    }
+
+    /* New path must not exist. */
+    uint32_t tmp_mode = 0;
+    if (vfs_lookup_abs(link_abs, 0, 0, &tmp_mode) == 0) {
+        return (uint64_t)(-(int64_t)EEXIST);
+    }
+
+    /* Parent must exist and be a directory. */
+    const char *p = link_abs;
+    while (*p == '/') p++;
+    if (*p == '\0') {
+        return (uint64_t)(-(int64_t)EINVAL);
+    }
+
+    char parent_no_slash[MAX_PATH];
+    {
+        uint64_t n = cstr_len_u64(p);
+        if (n + 1 > sizeof(parent_no_slash)) return (uint64_t)(-(int64_t)ENAMETOOLONG);
+        for (uint64_t i = 0; i <= n; i++) parent_no_slash[i] = p[i];
+        if (n == 0) return (uint64_t)(-(int64_t)EINVAL);
+
+        while (n > 0 && parent_no_slash[n - 1] == '/') {
+            parent_no_slash[n - 1] = '\0';
+            n--;
+        }
+        if (n == 0) return (uint64_t)(-(int64_t)EINVAL);
+
+        int last = -1;
+        for (uint64_t i = 0; parent_no_slash[i] != '\0'; i++) {
+            if (parent_no_slash[i] == '/') last = (int)i;
+        }
+        if (last >= 0) parent_no_slash[last] = '\0';
+        else parent_no_slash[0] = '\0';
+    }
+
+    char parent_abs[MAX_PATH];
+    if (parent_no_slash[0] == '\0') {
+        parent_abs[0] = '/';
+        parent_abs[1] = '\0';
+    } else {
+        uint64_t pn = cstr_len_u64(parent_no_slash);
+        if (pn + 2 > sizeof(parent_abs)) return (uint64_t)(-(int64_t)ENAMETOOLONG);
+        parent_abs[0] = '/';
+        for (uint64_t i = 0; i <= pn; i++) parent_abs[1 + i] = parent_no_slash[i];
+    }
+
+    uint32_t pmode = 0;
+    if (vfs_lookup_abs(parent_abs, 0, 0, &pmode) != 0) {
+        return (uint64_t)(-(int64_t)ENOENT);
+    }
+    if ((pmode & 0170000u) != 0040000u) {
+        return (uint64_t)(-(int64_t)ENOTDIR);
+    }
+
+    int crc = vfs_ramfile_create(p, S_IFLNK | 0777u);
+    if (crc != 0) return (uint64_t)(int64_t)crc;
+
+    uint32_t file_id = 0;
+    if (vfs_ramfile_find_abs(link_abs, &file_id) != 0) {
+        (void)vfs_ramfile_unlink(p);
+        return (uint64_t)(-(int64_t)ENOENT);
+    }
+
+    uint8_t *data = 0;
+    uint64_t size = 0;
+    uint64_t cap = 0;
+    uint32_t mode = 0;
+    if (vfs_ramfile_get(file_id, &data, &size, &cap, &mode) != 0) {
+        (void)vfs_ramfile_unlink(p);
+        return (uint64_t)(-(int64_t)ENOENT);
+    }
+
+    uint64_t tlen = cstr_len_u64(target_in);
+    if (tlen > cap) {
+        (void)vfs_ramfile_unlink(p);
+        return (uint64_t)(-(int64_t)ENAMETOOLONG);
+    }
+    for (uint64_t i = 0; i < tlen; i++) data[i] = (uint8_t)target_in[i];
+    if (vfs_ramfile_set_size(file_id, tlen) != 0) {
+        (void)vfs_ramfile_unlink(p);
+        return (uint64_t)(-(int64_t)EINVAL);
     }
     return 0;
 }
@@ -394,6 +589,10 @@ uint64_t sys_openat(int64_t dirfd, uint64_t pathname_user, uint64_t flags, uint6
     proc_t *cur = &g_procs[g_cur_proc];
     char path[MAX_PATH];
     if (resolve_path(cur, in, path, sizeof(path)) != 0) {
+        return (uint64_t)(-(int64_t)EINVAL);
+    }
+
+    if (resolve_final_symlink(path, sizeof(path)) != 0) {
         return (uint64_t)(-(int64_t)EINVAL);
     }
 
@@ -1133,6 +1332,10 @@ uint64_t sys_newfstatat(int64_t dirfd, uint64_t pathname_user, uint64_t statbuf_
         return (uint64_t)(-(int64_t)EINVAL);
     }
 
+    if (resolve_final_symlink(path, sizeof(path)) != 0) {
+        return (uint64_t)(-(int64_t)EINVAL);
+    }
+
     if (cstr_eq_u64(path, "/proc") || cstr_eq_u64(path, "/proc/")) {
         linux_stat_t *st = (linux_stat_t *)(uintptr_t)statbuf_user;
         st->st_mode = 0040000u | 0555u;
@@ -1177,6 +1380,48 @@ uint64_t sys_newfstatat(int64_t dirfd, uint64_t pathname_user, uint64_t statbuf_
     const volatile uint8_t *src = (const volatile uint8_t *)&st;
     for (uint64_t i = 0; i < sizeof(st); i++) dst[i] = src[i];
     return 0;
+}
+
+uint64_t sys_readlinkat(int64_t dirfd, uint64_t pathname_user, uint64_t buf_user, uint64_t bufsiz) {
+    if (dirfd != AT_FDCWD) {
+        return (uint64_t)(-(int64_t)ENOSYS);
+    }
+    if (pathname_user == 0 || buf_user == 0) {
+        return (uint64_t)(-(int64_t)EFAULT);
+    }
+    if (bufsiz == 0) {
+        return 0;
+    }
+    if (!user_range_ok(buf_user, bufsiz)) {
+        return (uint64_t)(-(int64_t)EFAULT);
+    }
+
+    char in[MAX_PATH];
+    if (copy_cstr_from_user(in, sizeof(in), pathname_user) != 0) {
+        return (uint64_t)(-(int64_t)EFAULT);
+    }
+
+    proc_t *cur = &g_procs[g_cur_proc];
+    char abs_path[MAX_PATH];
+    if (resolve_path(cur, in, abs_path, sizeof(abs_path)) != 0) {
+        return (uint64_t)(-(int64_t)EINVAL);
+    }
+
+    const uint8_t *data = 0;
+    uint64_t size = 0;
+    uint32_t mode = 0;
+    if (vfs_lookup_abs(abs_path, &data, &size, &mode) != 0) {
+        return (uint64_t)(-(int64_t)ENOENT);
+    }
+    if ((mode & S_IFMT) != S_IFLNK) {
+        return (uint64_t)(-(int64_t)EINVAL);
+    }
+
+    uint64_t n = (size < bufsiz) ? size : bufsiz;
+    if (write_bytes_to_user(buf_user, data, n) != 0) {
+        return (uint64_t)(-(int64_t)EFAULT);
+    }
+    return n;
 }
 
 uint64_t sys_unlinkat(int64_t dirfd, uint64_t pathname_user, uint64_t flags) {

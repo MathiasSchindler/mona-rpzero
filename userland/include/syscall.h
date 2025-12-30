@@ -24,6 +24,7 @@ uint64_t __syscall4_upup(uint64_t nr, uint64_t a0, void *p1, uint64_t a2, void *
 #define __NR_dup3      24ull
 #define __NR_mkdirat   34ull
 #define __NR_unlinkat  35ull
+#define __NR_symlinkat 36ull
 #define __NR_linkat    37ull
 #define __NR_chdir     49ull
 #define __NR_openat    56ull
@@ -33,6 +34,7 @@ uint64_t __syscall4_upup(uint64_t nr, uint64_t a0, void *p1, uint64_t a2, void *
 #define __NR_lseek     62ull
 #define __NR_read      63ull
 #define __NR_write      64ull
+#define __NR_readlinkat 78ull
 #define __NR_newfstatat 79ull
 #define __NR_nanosleep 101ull
 #define __NR_set_tid_address 96ull
@@ -215,6 +217,14 @@ static inline uint64_t sys_unlinkat(uint64_t dirfd, const char *pathname, uint64
     return __syscall3_p(__NR_unlinkat, dirfd, (void *)pathname, flags);
 }
 
+static inline uint64_t sys_symlinkat(const char *target, int64_t newdirfd, const char *linkpath) {
+    return __syscall3(
+        __NR_symlinkat,
+        (uint64_t)(uintptr_t)target,
+        (uint64_t)newdirfd,
+        (uint64_t)(uintptr_t)linkpath);
+}
+
 static inline uint64_t sys_linkat(int64_t olddirfd, const char *oldpath, int64_t newdirfd, const char *newpath, uint64_t flags) {
     return __syscall5(
         __NR_linkat,
@@ -255,6 +265,10 @@ static inline uint64_t sys_lseek(uint64_t fd, int64_t offset, uint64_t whence) {
 
 static inline uint64_t sys_newfstatat(uint64_t dirfd, const char *pathname, void *statbuf, uint64_t flags) {
     return __syscall4_uppu(__NR_newfstatat, dirfd, pathname, statbuf, flags);
+}
+
+static inline uint64_t sys_readlinkat(int64_t dirfd, const char *pathname, void *buf, uint64_t bufsiz) {
+    return __syscall4_uppu(__NR_readlinkat, (uint64_t)dirfd, pathname, buf, bufsiz);
 }
 
 static inline uint64_t sys_execve(const char *pathname, const char *const *argv, const char *const *envp) {

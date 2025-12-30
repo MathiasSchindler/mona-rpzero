@@ -409,6 +409,61 @@ int main(int argc, char **argv, char **envp) {
         }
     }
 
+    /* Tool smoke test: ln -s + readlink (and open follows symlink). */
+    {
+        enum {
+            AT_FDCWD = -100,
+        };
+
+        (void)sys_unlinkat((uint64_t)AT_FDCWD, "/tmp/sy", 0);
+
+        const char *const ln_argv[] = {"ln", "-s", "/uniq.txt", "/tmp/sy", 0};
+        failed |= run_test("/bin/ln -s /uniq.txt /tmp/sy", "/bin/ln", ln_argv);
+
+        char out[256];
+        const char *const rl_argv[] = {"readlink", "/tmp/sy", 0};
+        if (run_capture("/bin/readlink", rl_argv, out, sizeof(out)) != 0) {
+            sys_puts("[kinit] readlink capture failed\n");
+            failed |= 1;
+        } else if (!mem_contains(out, cstr_len_u64_local(out), "/uniq.txt")) {
+            sys_puts("[kinit] readlink output unexpected\n");
+            failed |= 1;
+        }
+
+        {
+            const char *const cat_argv[] = {"cat", "/tmp/sy", 0};
+            failed |= run_test("/bin/cat /tmp/sy", "/bin/cat", cat_argv);
+        }
+
+        (void)sys_unlinkat((uint64_t)AT_FDCWD, "/tmp/sy", 0);
+    }
+
+    /* Tool smoke test: time. */
+    {
+        char out[256];
+        const char *const t_argv[] = {"time", "/bin/true", 0};
+        if (run_capture("/bin/time", t_argv, out, sizeof(out)) != 0) {
+            sys_puts("[kinit] time capture failed\n");
+            failed |= 1;
+        } else if (!mem_contains(out, cstr_len_u64_local(out), "real")) {
+            sys_puts("[kinit] time output unexpected\n");
+            failed |= 1;
+        }
+    }
+
+    /* Tool smoke test: readelf. */
+    {
+        char out[512];
+        const char *const re_argv[] = {"readelf", "/bin/sh", 0};
+        if (run_capture("/bin/readelf", re_argv, out, sizeof(out)) != 0) {
+            sys_puts("[kinit] readelf capture failed\n");
+            failed |= 1;
+        } else if (!mem_contains(out, cstr_len_u64_local(out), "ELF Header")) {
+            sys_puts("[kinit] readelf output unexpected\n");
+            failed |= 1;
+        }
+    }
+
     /* Tool smoke test: pipeline into wc. */
     {
         const char *const test_argv[] = {"sh", "-c", "seq 1 10 | wc -l", 0};

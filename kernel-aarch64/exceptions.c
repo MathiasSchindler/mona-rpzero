@@ -13,6 +13,7 @@
 #define __NR_dup3      24ull
 #define __NR_mkdirat   34ull
 #define __NR_unlinkat  35ull
+#define __NR_symlinkat 36ull
 #define __NR_linkat    37ull
 #define __NR_chdir     49ull
 #define __NR_openat    56ull
@@ -22,6 +23,7 @@
 #define __NR_lseek     62ull
 #define __NR_read      63ull
 #define __NR_write     64ull
+#define __NR_readlinkat 78ull
 #define __NR_newfstatat 79ull
 #define __NR_nanosleep 101ull
 #define __NR_set_tid_address 96ull
@@ -261,6 +263,10 @@ uint64_t exception_handle(trap_frame_t *tf,
             ret = sys_mkdirat((int64_t)a0, a1, a2);
             break;
 
+        case __NR_symlinkat:
+            ret = sys_symlinkat(a0, (int64_t)a1, a2);
+            break;
+
         case __NR_linkat:
             ret = sys_linkat((int64_t)a0, a1, (int64_t)a2, a3, a4);
             break;
@@ -295,6 +301,10 @@ uint64_t exception_handle(trap_frame_t *tf,
 
         case __NR_write:
             ret = sys_write(a0, (const void *)(uintptr_t)a1, a2);
+            break;
+
+        case __NR_readlinkat:
+            ret = sys_readlinkat((int64_t)a0, a1, a2, a3);
             break;
 
         case __NR_newfstatat:
