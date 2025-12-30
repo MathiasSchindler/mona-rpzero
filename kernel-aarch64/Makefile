@@ -38,6 +38,7 @@ OBJS := \
 	$(BUILD)/time.o \
 	$(BUILD)/power.o \
 	$(BUILD)/mailbox.o \
+	$(BUILD)/fb.o \
 	$(BUILD)/sys_util.o \
 	$(BUILD)/sys_misc.o \
 	$(BUILD)/sys_fs.o \
@@ -123,6 +124,9 @@ $(BUILD)/power.o: power.c include/power.h include/errno.h include/uart_pl011.h $
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/mailbox.o: mailbox.c include/mailbox.h include/stddef.h include/stdint.h $(CONFIG_STAMP) | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/fb.o: fb.c include/fb.h include/mailbox.h include/uart_pl011.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/sys_util.o: sys_util.c include/sys_util.h include/proc.h include/mmu.h $(CONFIG_STAMP) | $(BUILD)

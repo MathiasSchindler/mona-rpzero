@@ -28,7 +28,7 @@ MEM ?= 1024
 USERPROG ?= init
 
 
-.PHONY: all run test clean
+.PHONY: all run run-gfx test clean
 .PHONY: aarch64-kernel run-aarch64 test-aarch64 userland
 
 all: aarch64-kernel
@@ -63,6 +63,16 @@ run-aarch64: userland
 	@set +e; bash tools/run-qemu-raspi3b.sh --kernel "$(AARCH64_IMG)" --dtb "$(DTB)" --mem "$(MEM)"; rc=$$?; if [[ $$rc -eq 0 || $$rc -eq 128 ]]; then exit 0; fi; exit $$rc
 
 run: run-aarch64
+
+run-gfx: userland
+	@echo "Starting QEMU (raspi3b) with graphics + framebuffer"
+	@if [[ -z "$(DTB)" ]]; then \
+		echo "No DTB found. Put one into out/ or archive/, or pass DTB=..." >&2; \
+		echo "Tried: $(DTB_CANDIDATES)" >&2; \
+		exit 2; \
+	fi
+	@$(MAKE) -C "$(AARCH64_DIR)" CROSS="$(AARCH64_CROSS)" USERPROG="$(USERPROG)" KERNEL_DEFS="-DQEMU_SEMIHOSTING -DENABLE_FB" all
+	@set +e; bash tools/run-qemu-raspi3b.sh --gfx --kernel "$(AARCH64_IMG)" --dtb "$(DTB)" --mem "$(MEM)"; rc=$$?; if [[ $$rc -eq 0 || $$rc -eq 128 ]]; then exit 0; fi; exit $$rc
 
 test:
 	@$(MAKE) USERPROG=kinit test-aarch64

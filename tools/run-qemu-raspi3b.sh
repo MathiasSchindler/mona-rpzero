@@ -25,6 +25,8 @@ KERNEL=""
 DTB=""
 APPEND=""
 MEM=1024
+GFX=0
+DISPLAY_BACKEND=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -33,6 +35,8 @@ while [[ $# -gt 0 ]]; do
     --dtb) DTB="$2"; shift 2;;
     --append) APPEND="$2"; shift 2;;
     --mem) MEM="$2"; shift 2;;
+    --graphic|--gfx) GFX=1; shift;;
+    --display) DISPLAY_BACKEND="$2"; GFX=1; shift 2;;
     -h|--help) usage; exit 0;;
     *) echo "Unknown argument: $1" >&2; usage; exit 2;;
   esac
@@ -53,11 +57,20 @@ cmd=(
   -M raspi3b
   -cpu cortex-a53
   -m "$MEM"
-  -nographic
   -semihosting
   -kernel "$KERNEL"
   -dtb "$DTB"
 )
+
+if [[ "$GFX" -eq 1 ]]; then
+  # Keep UART on stdio while enabling a display window.
+  if [[ -z "$DISPLAY_BACKEND" ]]; then
+    DISPLAY_BACKEND="cocoa"
+  fi
+  cmd+=( -display "$DISPLAY_BACKEND" -serial stdio )
+else
+  cmd+=( -nographic )
+fi
 
 if [[ -n "$SD" ]]; then
   cmd+=( -drive "file=${SD},format=raw,if=sd" )

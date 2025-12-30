@@ -6,6 +6,7 @@
 #include "cache.h"
 #include "initramfs.h"
 #include "time.h"
+#include "fb.h"
 
 extern unsigned char __kernel_start[];
 extern unsigned char __kernel_end[];
@@ -44,6 +45,13 @@ void kmain(unsigned long dtb_ptr) {
         pmm_init(info.mem_base, info.mem_size, ks, ke, (uint64_t)dtb_ptr);
 
         mmu_init_identity(info.mem_base, info.mem_size);
+
+    #ifdef ENABLE_FB
+        /* Best-effort framebuffer bring-up (QEMU-first). */
+        if (fb_init_from_mailbox(1920, 1080, 32) == 0) {
+            fb_fill(0x00203040u);
+        }
+    #endif
 
         uart_write("mmu: higher-half test\n");
         uint64_t low = g_mmu_test;
