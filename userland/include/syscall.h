@@ -37,6 +37,7 @@ uint64_t __syscall4_upup(uint64_t nr, uint64_t a0, void *p1, uint64_t a2, void *
 #define __NR_set_tid_address 96ull
 #define __NR_set_robust_list 99ull
 #define __NR_clock_gettime 113ull
+#define __NR_kill      129ull
 #define __NR_rt_sigaction 134ull
 #define __NR_rt_sigprocmask 135ull
 #define __NR_reboot    142ull
@@ -163,6 +164,10 @@ static inline uint64_t sys_rt_sigaction(uint64_t sig, const void *act, void *old
 
 static inline uint64_t sys_rt_sigprocmask(uint64_t how, const void *set, void *oldset, uint64_t sigsetsize) {
     return __syscall4(__NR_rt_sigprocmask, how, (uint64_t)(uintptr_t)set, (uint64_t)(uintptr_t)oldset, sigsetsize);
+}
+
+static inline uint64_t sys_kill(int64_t pid, uint64_t sig) {
+    return __syscall2(__NR_kill, (uint64_t)pid, sig);
 }
 
 static inline uint64_t sys_getrandom(void *buf, uint64_t len, uint64_t flags) {

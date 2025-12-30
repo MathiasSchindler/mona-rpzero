@@ -757,3 +757,96 @@ int handle_exit_and_maybe_switch(trap_frame_t *tf, uint64_t code) {
     uart_write("\n");
     return 0;
 }
+
+static int proc_find_idx_by_pid(uint64_t pid) {
+    for (int i = 0; i < (int)MAX_PROCS; i++) {
+        if (g_procs[i].state == PROC_UNUSED) continue;
+        if (g_procs[i].pid == pid) return i;
+    }
+    return -1;
+}
+
+uint64_t sys_kill(trap_frame_t *tf, int64_t pid, uint64_t sig, uint64_t elr) {
+    (void)elr;
+
+    if (pid <= 0) {
+        return (uint64_t)(-(int64_t)EINVAL);
+    }
+
+    /* Minimal support: sig=0 (existence check), SIGKILL(9), SIGTERM(15). */
+    if (sig != 0 && sig != 9 && sig != 15) {
+        return (uint64_t)(-(int64_t)ENOSYS);
+    }
+
+    int idx = proc_find_idx_by_pid((uint64_t)pid);
+    if (idx < 0) {
+        return (uint64_t)(-(int64_t)ESRCH);
+    }
+
+    if (sig == 0) {
+        return 0;
+    }
+
+    /* If already dead, treat as success. */
+    if (g_procs[idx].state == PROC_ZOMBIE) {
+        return 0;
+    }
+
+    uint64_t code = 128u + (sig & 0xffu);
+
+    /* Self-kill: reuse the normal exit path so we switch properly. */
+    if (idx == g_cur_proc) {
+        int switched = handle_exit_and_maybe_switch(tf, code);
+        return switched ? SYSCALL_SWITCHED : 0;
+    }
+
+    /* Kill another process: mark zombie and wake a waiting parent if present. */
+    proc_close_all_fds(&g_procs[idx]);
+
+    /* Best-effort thread-lib compatibility: clear *clear_child_tid on exit. */
+    if (g_procs[idx].clear_child_tid_user != 0) {
+        mmu_ttbr0_write(g_procs[idx].ttbr0_pa);
+        if (user_range_ok(g_procs[idx].clear_child_tid_user, 4)) {
+            *(volatile uint32_t *)(uintptr_t)g_procs[idx].clear_child_tid_user = 0;
+        }
+    }
+
+    g_procs[idx].state = PROC_ZOMBIE;
+    g_procs[idx].exit_code = code;
+    uint64_t cpid = g_procs[idx].pid;
+
+    for (int i = 0; i < (int)MAX_PROCS; i++) {
+        if (g_procs[i].state != PROC_WAITING) continue;
+        if (g_procs[i].pid != g_procs[idx].ppid) continue;
+
+        int64_t want = g_procs[i].wait_target_pid;
+        if (want > 0 && (uint64_t)want != cpid) {
+            break;
+        }
+
+        /* Switch to parent's address space before writing status/return value. */
+        mmu_ttbr0_write(g_procs[i].ttbr0_pa);
+
+        uint64_t wstatus_user = g_procs[i].wait_status_user;
+        if (wstatus_user != 0 && user_range_ok(wstatus_user, 4)) {
+            uint32_t st = (uint32_t)((code & 0xffu) << 8);
+            *(volatile uint32_t *)(uintptr_t)wstatus_user = st;
+        }
+
+        g_procs[i].state = PROC_RUNNABLE;
+        g_procs[i].wait_target_pid = 0;
+        g_procs[i].wait_status_user = 0;
+        g_procs[i].tf.x[0] = cpid;
+
+        /* Parent was blocked in wait4; reap the child now. */
+        if (g_procs[idx].user_pa_base != 0 && g_procs[idx].user_pa_base != USER_REGION_BASE) {
+            pmm_free_2mib_aligned(g_procs[idx].user_pa_base);
+        }
+        proc_clear(&g_procs[idx]);
+        break;
+    }
+
+    /* Restore current process address space before returning to user. */
+    mmu_ttbr0_write(g_procs[g_cur_proc].ttbr0_pa);
+    return 0;
+}

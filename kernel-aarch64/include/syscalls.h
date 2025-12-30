@@ -19,6 +19,7 @@ uint64_t sys_gettid(void);
 
 uint64_t sys_uname(uint64_t buf_user);
 uint64_t sys_clock_gettime(uint64_t clockid, uint64_t tp_user);
+uint64_t sys_kill(trap_frame_t *tf, int64_t pid, uint64_t sig, uint64_t elr);
 uint64_t sys_reboot(uint64_t magic1, uint64_t magic2, uint64_t cmd, uint64_t arg);
 uint64_t sys_set_tid_address(uint64_t tidptr_user);
 uint64_t sys_set_robust_list(uint64_t head_user, uint64_t len);

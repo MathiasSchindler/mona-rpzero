@@ -20,5 +20,6 @@
 #define ERANGE 34ull
 #define ENAMETOOLONG 36ull
 #define ENOENT 2ull
+#define ESRCH 3ull
 #define ENOSYS 38ull
 #define ENOTEMPTY 39ull

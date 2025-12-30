@@ -105,8 +105,8 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | tee | Planned | 0 |
 | yes | Planned | 0 |
 | dirname | Planned | 0 |
-| kill | Planned | 0 |
-| ps | Planned | 0 |
+| kill | Done | 3 |
+| ps | Done | 2 |
 | test | Planned | 0 |
 
 Notes on current “Partial” implementations:
@@ -117,7 +117,8 @@ Notes on current “Partial” implementations:
 - `uname`: prints `sysname release machine`; no flags.
 - `sleep`: current binary is a syscall smoke test (fixed `nanosleep` request) rather than a CLI-compatible sleep.
 - `sh`: supports interactive mode, `-c`, and a single `cmd1 | cmd2` pipeline.
-- `init`: system init + selftests runner, not a general-purpose tool.
+- `init`: system init that starts `/bin/sh`.
+- `kinit`: selftest runner for `make test`.
 
 ## Extra repo utilities (not in monacc list)
 

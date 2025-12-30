@@ -19,6 +19,7 @@ typedef enum {
     FDESC_INITRAMFS = 2,
     FDESC_PIPE = 3,
     FDESC_RAMFILE = 4,
+    FDESC_PROC = 5,
 } fdesc_kind_t;
 
 typedef struct {
@@ -42,6 +43,11 @@ typedef struct {
             uint32_t _pad;
             uint64_t off;
         } ramfile;
+        struct {
+            uint32_t node; /* 1=dir, 2=ps */
+            uint32_t _pad;
+            uint64_t off;
+        } proc;
         struct {
             uint32_t unused;
         } uart;

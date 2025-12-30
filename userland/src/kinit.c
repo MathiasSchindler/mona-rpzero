@@ -33,6 +33,117 @@ static int run_test(const char *label, const char *path, const char *const argv[
     return 0;
 }
 
+static uint64_t cstr_len_u64_local(const char *s) {
+    uint64_t n = 0;
+    while (s && s[n] != '\0') n++;
+    return n;
+}
+
+static void u64_to_dec(uint64_t v, char *out, uint64_t cap) {
+    if (!out || cap == 0) return;
+    if (cap == 1) {
+        out[0] = '\0';
+        return;
+    }
+
+    if (v == 0) {
+        out[0] = '0';
+        out[1] = '\0';
+        return;
+    }
+
+    char tmp[32];
+    uint64_t t = 0;
+    while (v != 0 && t < sizeof(tmp)) {
+        tmp[t++] = (char)('0' + (v % 10u));
+        v /= 10u;
+    }
+
+    uint64_t n = 0;
+    while (t > 0 && n + 1 < cap) {
+        out[n++] = tmp[--t];
+    }
+    out[n] = '\0';
+}
+
+static int mem_contains(const char *hay, uint64_t hay_len, const char *needle) {
+    uint64_t nlen = cstr_len_u64_local(needle);
+    if (nlen == 0) return 1;
+    if (hay_len < nlen) return 0;
+
+    for (uint64_t i = 0; i + nlen <= hay_len; i++) {
+        int ok = 1;
+        for (uint64_t j = 0; j < nlen; j++) {
+            if (hay[i + j] != needle[j]) {
+                ok = 0;
+                break;
+            }
+        }
+        if (ok) return 1;
+    }
+    return 0;
+}
+
+static int run_capture(const char *path, const char *const argv[], char *out, uint64_t out_cap) {
+    if (!out || out_cap == 0) return 1;
+    out[0] = '\0';
+
+    int pfds[2];
+    long prc = (long)sys_pipe2(pfds, 0);
+    if (prc < 0) {
+        sys_puts("[kinit] pipe2 failed\n");
+        return 1;
+    }
+
+    long pid = (long)sys_fork();
+    if (pid == 0) {
+        (void)sys_dup2((uint64_t)pfds[1], 1);
+        (void)sys_close((uint64_t)pfds[0]);
+        (void)sys_close((uint64_t)pfds[1]);
+        (void)sys_execve(path, argv, 0);
+        sys_puts("[kinit] capture execve failed\n");
+        sys_exit_group(127);
+    } else if (pid < 0) {
+        sys_puts("[kinit] fork failed\n");
+        (void)sys_close((uint64_t)pfds[0]);
+        (void)sys_close((uint64_t)pfds[1]);
+        return 1;
+    }
+
+    (void)sys_close((uint64_t)pfds[1]);
+
+    uint64_t pos = 0;
+    int read_failed = 0;
+    while (pos + 1 < out_cap) {
+        long n = (long)sys_read((uint64_t)pfds[0], out + pos, out_cap - pos - 1);
+        if (n < 0) {
+            /* EAGAIN (11) => retry (used for pipes). */
+            if (n == -11) {
+                continue;
+            }
+            sys_puts("[kinit] capture read failed\n");
+            read_failed = 1;
+            break;
+        }
+        if (n == 0) break;
+        pos += (uint64_t)n;
+    }
+    out[pos] = '\0';
+    (void)sys_close((uint64_t)pfds[0]);
+
+    int status = 0;
+    uint64_t wrc = sys_wait4((uint64_t)pid, &status, 0, 0);
+    if ((int64_t)wrc < 0) {
+        sys_puts("[kinit] capture wait4 failed\n");
+        return 1;
+    }
+
+    if (read_failed) return 1;
+
+    int exit_code = (status >> 8) & 0xff;
+    return (exit_code == 0) ? 0 : 1;
+}
+
 int main(int argc, char **argv, char **envp) {
     (void)argc;
     (void)argv;
@@ -149,6 +260,61 @@ int main(int argc, char **argv, char **envp) {
     {
         const char *const test_argv[] = {"compat", 0};
         failed |= run_test("/bin/compat", "/bin/compat", test_argv);
+    }
+
+    /* Tool smoke test: ps + kill (fork a child, ensure it shows in ps, kill it, ensure it disappears). */
+    {
+        sys_puts("[kinit] selftest: /bin/ps + /bin/kill\n");
+
+        long cpid = (long)sys_fork();
+        if (cpid == 0) {
+            /* Busy loop that yields via syscalls; gets killed by parent. */
+            for (;;) {
+                (void)sys_getpid();
+            }
+        }
+        if (cpid < 0) {
+            sys_puts("[kinit] fork failed\n");
+            failed |= 1;
+        } else {
+            char ps_out[1024];
+            const char *const ps_argv[] = {"ps", 0};
+
+            char pid_str[32];
+            u64_to_dec((uint64_t)cpid, pid_str, sizeof(pid_str));
+
+            if (run_capture("/bin/ps", ps_argv, ps_out, sizeof(ps_out)) != 0) {
+                sys_puts("[kinit] ps capture failed\n");
+                failed |= 1;
+            } else if (!mem_contains(ps_out, cstr_len_u64_local(ps_out), pid_str)) {
+                sys_puts("[kinit] ps output missing child pid\n");
+                failed |= 1;
+            }
+
+            const char *const kill_argv[] = {"kill", "-9", pid_str, 0};
+            failed |= run_test("/bin/kill -9 <pid>", "/bin/kill", kill_argv);
+
+            int st = 0;
+            uint64_t wrc = sys_wait4((uint64_t)cpid, &st, 0, 0);
+            if ((int64_t)wrc < 0) {
+                sys_puts("[kinit] wait4 after kill failed\n");
+                failed |= 1;
+            } else {
+                int exit_code = (st >> 8) & 0xff;
+                if (exit_code != 137) {
+                    sys_puts("[kinit] unexpected exit code after kill\n");
+                    failed |= 1;
+                }
+            }
+
+            if (run_capture("/bin/ps", ps_argv, ps_out, sizeof(ps_out)) != 0) {
+                sys_puts("[kinit] ps capture failed (post-kill)\n");
+                failed |= 1;
+            } else if (mem_contains(ps_out, cstr_len_u64_local(ps_out), pid_str)) {
+                sys_puts("[kinit] ps output still contains killed pid\n");
+                failed |= 1;
+            }
+        }
     }
 
     if (failed) {

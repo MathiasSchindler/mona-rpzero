@@ -26,6 +26,9 @@ void desc_clear(file_desc_t *d) {
     d->u.ramfile.file_id = 0;
     d->u.ramfile._pad = 0;
     d->u.ramfile.off = 0;
+    d->u.proc.node = 0;
+    d->u.proc._pad = 0;
+    d->u.proc.off = 0;
 }
 
 void fd_init(void) {

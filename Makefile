@@ -51,7 +51,7 @@ userland:
 aarch64-kernel: userland
 	@$(MAKE) -C "$(AARCH64_DIR)" CROSS="$(AARCH64_CROSS)" USERPROG="$(USERPROG)" all
 
-run-aarch64: aarch64-kernel
+run-aarch64: userland
 	@echo "Starting QEMU (raspi3b) with bare-metal kernel"
 	@if [[ -z "$(DTB)" ]]; then \
 		echo "No DTB found. Put one into out/ or archive/, or pass DTB=..." >&2; \
@@ -59,7 +59,6 @@ run-aarch64: aarch64-kernel
 		exit 2; \
 	fi
 	@# Enable semihosting-powered `poweroff` for QEMU runs.
-	@$(MAKE) -C "$(AARCH64_DIR)" CROSS="$(AARCH64_CROSS)" clean
 	@$(MAKE) -C "$(AARCH64_DIR)" CROSS="$(AARCH64_CROSS)" USERPROG="$(USERPROG)" KERNEL_DEFS="-DQEMU_SEMIHOSTING" all
 	@set +e; bash tools/run-qemu-raspi3b.sh --kernel "$(AARCH64_IMG)" --dtb "$(DTB)" --mem "$(MEM)"; rc=$$?; if [[ $$rc -eq 0 || $$rc -eq 128 ]]; then exit 0; fi; exit $$rc
 
@@ -76,7 +75,6 @@ test-aarch64: userland
 		exit 2; \
 	fi
 	@# Enable semihosting-powered exit codes for QEMU tests.
-	@$(MAKE) -C "$(AARCH64_DIR)" CROSS="$(AARCH64_CROSS)" clean
 	@$(MAKE) -C "$(AARCH64_DIR)" CROSS="$(AARCH64_CROSS)" USERPROG="$(USERPROG)" KERNEL_DEFS="-DQEMU_SEMIHOSTING" all
 	@set +e; bash tools/run-qemu-raspi3b.sh --kernel "$(AARCH64_IMG)" --dtb "$(DTB)" --mem "$(MEM)"; rc=$$?; if [[ $$rc -eq 0 || $$rc -eq 128 ]]; then exit 0; fi; exit $$rc
 

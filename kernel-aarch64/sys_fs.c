@@ -24,6 +24,53 @@
 /* unlinkat(2) flags (subset). */
 #define AT_REMOVEDIR 0x200u
 
+/* /proc helpers (used by /proc/ps). */
+static char proc_state_char(proc_state_t st) {
+    switch (st) {
+        case PROC_RUNNABLE: return 'R';
+        case PROC_WAITING: return 'W';
+        case PROC_ZOMBIE: return 'Z';
+        case PROC_UNUSED: return 'U';
+        default: return '?';
+    }
+}
+
+static void buf_putc(char *buf, uint64_t cap, uint64_t *pos, char c) {
+    if (!buf || cap == 0 || !pos) return;
+    if (*pos + 1 >= cap) return;
+    buf[*pos] = c;
+    *pos = *pos + 1;
+}
+
+static void buf_puts(char *buf, uint64_t cap, uint64_t *pos, const char *s) {
+    if (!buf || cap == 0 || !pos || !s) return;
+    for (uint64_t i = 0; s[i] != '\0'; i++) {
+        if (*pos + 1 >= cap) return;
+        buf[*pos] = s[i];
+        *pos = *pos + 1;
+    }
+}
+
+static void buf_put_u64(char *buf, uint64_t cap, uint64_t *pos, uint64_t v) {
+    if (!buf || cap == 0 || !pos) return;
+    if (*pos + 1 >= cap) return;
+
+    if (v == 0) {
+        buf_putc(buf, cap, pos, '0');
+        return;
+    }
+
+    char tmp[32];
+    uint64_t t = 0;
+    while (v != 0 && t < sizeof(tmp)) {
+        tmp[t++] = (char)('0' + (v % 10u));
+        v /= 10u;
+    }
+    while (t > 0) {
+        buf_putc(buf, cap, pos, tmp[--t]);
+    }
+}
+
 uint64_t sys_getcwd(uint64_t buf_user, uint64_t size) {
     proc_t *cur = &g_procs[g_cur_proc];
     uint64_t n = cstr_len_u64(cur->cwd);
@@ -229,6 +276,57 @@ uint64_t sys_openat(int64_t dirfd, uint64_t pathname_user, uint64_t flags, uint6
     char path[MAX_PATH];
     if (resolve_path(cur, in, path, sizeof(path)) != 0) {
         return (uint64_t)(-(int64_t)EINVAL);
+    }
+
+    /* Minimal procfs: /proc (dir) and /proc/ps (file). */
+    if (cstr_eq_u64(path, "/proc") || cstr_eq_u64(path, "/proc/")) {
+        uint64_t acc = flags & (uint64_t)O_ACCMODE;
+        if (acc != (uint64_t)O_RDONLY) {
+            return (uint64_t)(-(int64_t)EROFS);
+        }
+
+        int didx = desc_alloc();
+        if (didx < 0) {
+            return (uint64_t)(-(int64_t)EMFILE);
+        }
+        file_desc_t *d = &g_descs[didx];
+        desc_clear(d);
+        d->kind = FDESC_PROC;
+        d->refs = 1;
+        d->u.proc.node = 1u;
+        d->u.proc.off = 0;
+
+        int fd = fd_alloc_into(&cur->fdt, 3, didx);
+        desc_decref(didx);
+        if (fd < 0) {
+            return (uint64_t)(-(int64_t)EMFILE);
+        }
+        return (uint64_t)fd;
+    }
+
+    if (cstr_eq_u64(path, "/proc/ps")) {
+        uint64_t acc = flags & (uint64_t)O_ACCMODE;
+        if (acc != (uint64_t)O_RDONLY) {
+            return (uint64_t)(-(int64_t)EROFS);
+        }
+
+        int didx = desc_alloc();
+        if (didx < 0) {
+            return (uint64_t)(-(int64_t)EMFILE);
+        }
+        file_desc_t *d = &g_descs[didx];
+        desc_clear(d);
+        d->kind = FDESC_PROC;
+        d->refs = 1;
+        d->u.proc.node = 2u;
+        d->u.proc.off = 0;
+
+        int fd = fd_alloc_into(&cur->fdt, 3, didx);
+        desc_decref(didx);
+        if (fd < 0) {
+            return (uint64_t)(-(int64_t)EMFILE);
+        }
+        return (uint64_t)fd;
     }
 
     /* First: if a ramfile already exists at this path, open it. */
@@ -483,6 +581,39 @@ uint64_t sys_read(uint64_t fd, uint64_t buf_user, uint64_t len) {
         return n;
     }
 
+    if (d->kind == FDESC_PROC && d->u.proc.node == 2u) {
+        /* /proc/ps: generate a small text snapshot each read and slice by offset. */
+        char out[1024];
+        uint64_t pos = 0;
+
+        /* Tiny helpers */
+        for (int i = 0; i < (int)MAX_PROCS; i++) {
+            if (g_procs[i].state == PROC_UNUSED) continue;
+            buf_put_u64(out, sizeof(out), &pos, g_procs[i].pid);
+            buf_putc(out, sizeof(out), &pos, ' ');
+            buf_put_u64(out, sizeof(out), &pos, g_procs[i].ppid);
+            buf_putc(out, sizeof(out), &pos, ' ');
+            buf_putc(out, sizeof(out), &pos, proc_state_char(g_procs[i].state));
+            buf_putc(out, sizeof(out), &pos, ' ');
+            buf_puts(out, sizeof(out), &pos, g_procs[i].cwd);
+            buf_putc(out, sizeof(out), &pos, '\n');
+        }
+
+        /* NUL-terminate for safety (not counted). */
+        if (pos < sizeof(out)) out[pos] = '\0';
+
+        if (d->u.proc.off >= pos) return 0;
+        uint64_t remain = pos - d->u.proc.off;
+        uint64_t n = (len < remain) ? len : remain;
+        volatile uint8_t *dst = (volatile uint8_t *)(uintptr_t)buf_user;
+        const uint8_t *src = (const uint8_t *)out + d->u.proc.off;
+        for (uint64_t i = 0; i < n; i++) {
+            dst[i] = src[i];
+        }
+        d->u.proc.off += n;
+        return n;
+    }
+
     if (d->kind != FDESC_INITRAMFS) {
         return (uint64_t)(-(int64_t)EBADF);
     }
@@ -631,6 +762,28 @@ uint64_t sys_getdents64(uint64_t fd, uint64_t dirp_user, uint64_t count) {
         return (uint64_t)(-(int64_t)EBADF);
     }
     file_desc_t *d = &g_descs[didx];
+    if (d->kind == FDESC_PROC && d->u.proc.node == 1u) {
+        if (!user_range_ok(dirp_user, count)) {
+            return (uint64_t)(-(int64_t)EFAULT);
+        }
+
+        dents_ctx_t dc;
+        dc.skip = d->u.proc.off;
+        dc.emitted = 0;
+        dc.buf_user = dirp_user;
+        dc.buf_len = count;
+        dc.pos = 0;
+
+        (void)dents_emit_cb(".", 0040000u, &dc);
+        (void)dents_emit_cb("..", 0040000u, &dc);
+        (void)dents_emit_cb("ps", 0100000u, &dc);
+
+        if (dc.emitted > dc.skip) {
+            d->u.proc.off = dc.emitted;
+        }
+        return dc.pos;
+    }
+
     if (d->kind != FDESC_INITRAMFS || !d->u.initramfs.is_dir) {
         return (uint64_t)(-(int64_t)EBADF);
     }
@@ -665,6 +818,26 @@ uint64_t sys_lseek(uint64_t fd, int64_t off, uint64_t whence) {
         return (uint64_t)(-(int64_t)EBADF);
     }
     file_desc_t *d = &g_descs[didx];
+    if (d->kind == FDESC_PROC) {
+        /* Minimal support: SEEK_SET/SEEK_CUR only (used rarely). */
+        uint64_t cur_off = d->u.proc.off;
+        uint64_t newoff;
+        switch (whence) {
+            case 0: /* SEEK_SET */
+                if (off < 0) return (uint64_t)(-(int64_t)EINVAL);
+                newoff = (uint64_t)off;
+                break;
+            case 1: /* SEEK_CUR */
+                if (off < 0 && (uint64_t)(-off) > cur_off) return (uint64_t)(-(int64_t)EINVAL);
+                newoff = (uint64_t)((int64_t)cur_off + off);
+                break;
+            default:
+                return (uint64_t)(-(int64_t)EINVAL);
+        }
+        d->u.proc.off = newoff;
+        return newoff;
+    }
+
     if (d->kind == FDESC_RAMFILE) {
         uint8_t *data = 0;
         uint64_t size = 0;
@@ -839,6 +1012,21 @@ uint64_t sys_newfstatat(int64_t dirfd, uint64_t pathname_user, uint64_t statbuf_
     char path[MAX_PATH];
     if (resolve_path(cur, in, path, sizeof(path)) != 0) {
         return (uint64_t)(-(int64_t)EINVAL);
+    }
+
+    if (cstr_eq_u64(path, "/proc") || cstr_eq_u64(path, "/proc/")) {
+        linux_stat_t *st = (linux_stat_t *)(uintptr_t)statbuf_user;
+        st->st_mode = 0040000u | 0555u;
+        st->st_nlink = 1;
+        st->st_size = 0;
+        return 0;
+    }
+    if (cstr_eq_u64(path, "/proc/ps")) {
+        linux_stat_t *st = (linux_stat_t *)(uintptr_t)statbuf_user;
+        st->st_mode = 0100000u | 0444u;
+        st->st_nlink = 1;
+        st->st_size = 0;
+        return 0;
     }
 
     const uint8_t *data = 0;

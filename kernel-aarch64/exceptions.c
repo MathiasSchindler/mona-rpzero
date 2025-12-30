@@ -26,6 +26,7 @@
 #define __NR_set_tid_address 96ull
 #define __NR_set_robust_list 99ull
 #define __NR_clock_gettime 113ull
+#define __NR_kill      129ull
 #define __NR_rt_sigaction 134ull
 #define __NR_rt_sigprocmask 135ull
 #define __NR_reboot     142ull
@@ -211,6 +212,15 @@ uint64_t exception_handle(trap_frame_t *tf,
 
         case __NR_clock_gettime:
             ret = sys_clock_gettime(a0, a1);
+            break;
+
+        case __NR_kill:
+            ret = sys_kill(tf, (int64_t)a0, a1, elr);
+            if (ret == SYSCALL_SWITCHED) {
+                /* sys_kill already switched contexts. */
+                tf_copy(&g_procs[g_cur_proc].tf, tf);
+                return 1;
+            }
             break;
 
         case __NR_set_tid_address:

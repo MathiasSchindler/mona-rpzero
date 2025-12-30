@@ -8,6 +8,10 @@ OBJDUMP := $(CROSS)objdump
 
 BUILD := build
 
+# Track configuration changes (e.g. KERNEL_DEFS) so switching flags triggers the
+# minimal required rebuild without needing a full `make clean`.
+CONFIG_STAMP := $(BUILD)/.config.stamp
+
 # Which userland binary to embed as the EL0 payload.
 USERPROG ?= init
 
@@ -63,19 +67,28 @@ check-toolchain:
 $(BUILD):
 	@mkdir -p $(BUILD)/arch
 
-$(BUILD)/arch/start.o: arch/start.S | $(BUILD)
+$(CONFIG_STAMP): FORCE | $(BUILD)
+	@tmp="$@.tmp"; \
+	printf '%s\n' "CFLAGS=$(CFLAGS)" >"$$tmp"; \
+	if [[ ! -f "$@" ]] || ! cmp -s "$$tmp" "$@"; then \
+		mv "$$tmp" "$@"; \
+	else \
+		rm -f "$$tmp"; \
+	fi
+
+$(BUILD)/arch/start.o: arch/start.S $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/arch/exceptions.o: arch/exceptions.S | $(BUILD)
+$(BUILD)/arch/exceptions.o: arch/exceptions.S $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/arch/enter_el0.o: arch/enter_el0.S | $(BUILD)
+$(BUILD)/arch/enter_el0.o: arch/enter_el0.S $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/main.o: main.c include/uart_pl011.h | $(BUILD)
+$(BUILD)/main.o: main.c include/uart_pl011.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/uart_pl011.o: uart_pl011.c include/uart_pl011.h | $(BUILD)
+$(BUILD)/uart_pl011.o: uart_pl011.c include/uart_pl011.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 
@@ -84,69 +97,69 @@ $(BUILD)/user_payload.bin: ../userland/build/$(USERPROG).bin FORCE | $(BUILD)
 
 FORCE:
 
-$(BUILD)/initramfs_blob.o: initramfs_blob.S ../userland/build/initramfs.cpio | $(BUILD)
+$(BUILD)/initramfs_blob.o: initramfs_blob.S ../userland/build/initramfs.cpio $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 
-$(BUILD)/user_payload.o: user_payload.S $(BUILD)/user_payload.bin | $(BUILD)
+$(BUILD)/user_payload.o: user_payload.S $(BUILD)/user_payload.bin $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/cpio_newc.o: cpio_newc.c include/cpio_newc.h | $(BUILD)
+$(BUILD)/cpio_newc.o: cpio_newc.c include/cpio_newc.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/initramfs.o: initramfs.c include/initramfs.h include/cpio_newc.h | $(BUILD)
+$(BUILD)/initramfs.o: initramfs.c include/initramfs.h include/cpio_newc.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 
-$(BUILD)/exceptions.o: exceptions.c include/exceptions.h include/errno.h include/syscalls.h include/proc.h include/sched.h include/uart_pl011.h | $(BUILD)
+$(BUILD)/exceptions.o: exceptions.c include/exceptions.h include/errno.h include/syscalls.h include/proc.h include/sched.h include/uart_pl011.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/power.o: power.c include/power.h include/errno.h include/uart_pl011.h | $(BUILD)
+$(BUILD)/power.o: power.c include/power.h include/errno.h include/uart_pl011.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/sys_util.o: sys_util.c include/sys_util.h include/proc.h include/mmu.h | $(BUILD)
+$(BUILD)/sys_util.o: sys_util.c include/sys_util.h include/proc.h include/mmu.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/sys_misc.o: sys_misc.c include/syscalls.h include/sys_util.h include/errno.h include/linux_abi.h include/power.h include/proc.h | $(BUILD)
+$(BUILD)/sys_misc.o: sys_misc.c include/syscalls.h include/sys_util.h include/errno.h include/linux_abi.h include/power.h include/proc.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/sys_fs.o: sys_fs.c include/syscalls.h include/sys_util.h include/errno.h include/linux_abi.h include/fd.h include/pipe.h include/vfs.h include/initramfs.h include/proc.h include/uart_pl011.h | $(BUILD)
+$(BUILD)/sys_fs.o: sys_fs.c include/syscalls.h include/sys_util.h include/errno.h include/linux_abi.h include/fd.h include/pipe.h include/vfs.h include/initramfs.h include/proc.h include/uart_pl011.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/sys_proc.o: sys_proc.c include/syscalls.h include/sys_util.h include/errno.h include/linux_abi.h include/proc.h include/regs.h include/sched.h include/mmu.h include/pmm.h include/elf64.h include/cache.h include/initramfs.h include/power.h include/uart_pl011.h | $(BUILD)
+$(BUILD)/sys_proc.o: sys_proc.c include/syscalls.h include/sys_util.h include/errno.h include/linux_abi.h include/proc.h include/regs.h include/sched.h include/mmu.h include/pmm.h include/elf64.h include/cache.h include/initramfs.h include/power.h include/uart_pl011.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/proc.o: proc.c include/proc.h include/fd.h include/pipe.h include/vfs.h include/mmu.h | $(BUILD)
+$(BUILD)/proc.o: proc.c include/proc.h include/fd.h include/pipe.h include/vfs.h include/mmu.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/sched.o: sched.c include/sched.h include/proc.h include/regs.h include/mmu.h | $(BUILD)
+$(BUILD)/sched.o: sched.c include/sched.h include/proc.h include/regs.h include/mmu.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/vfs.o: vfs.c include/vfs.h include/initramfs.h | $(BUILD)
+$(BUILD)/vfs.o: vfs.c include/vfs.h include/initramfs.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/pipe.o: pipe.c include/pipe.h | $(BUILD)
+$(BUILD)/pipe.o: pipe.c include/pipe.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/fd.o: fd.c include/fd.h include/pipe.h | $(BUILD)
+$(BUILD)/fd.o: fd.c include/fd.h include/pipe.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/elf64.o: elf64.c include/elf64.h | $(BUILD)
+$(BUILD)/elf64.o: elf64.c include/elf64.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/fdt.o: fdt.c include/fdt.h include/uart_pl011.h | $(BUILD)
+$(BUILD)/fdt.o: fdt.c include/fdt.h include/uart_pl011.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/pmm.o: pmm.c include/pmm.h include/uart_pl011.h | $(BUILD)
+$(BUILD)/pmm.o: pmm.c include/pmm.h include/uart_pl011.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/mmu.o: mmu.c include/mmu.h include/pmm.h include/uart_pl011.h | $(BUILD)
+$(BUILD)/mmu.o: mmu.c include/mmu.h include/pmm.h include/uart_pl011.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/cache.o: cache.c include/cache.h | $(BUILD)
+$(BUILD)/cache.o: cache.c include/cache.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/kernel.elf: $(OBJS) link.ld | check-toolchain
+$(BUILD)/kernel.elf: $(OBJS) link.ld $(CONFIG_STAMP) | check-toolchain
 	$(LD) $(LDFLAGS) -o $@ $(OBJS)
 
 $(BUILD)/kernel8.img: $(BUILD)/kernel.elf
