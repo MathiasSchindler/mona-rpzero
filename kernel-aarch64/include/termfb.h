@@ -19,4 +19,8 @@ void termfb_clear(void);
 void termfb_putc(char c);
 void termfb_write(const char *s);
 
+/* ANSI-aware variants (minimal CSI handling: colors, clear, home/cursor-pos). */
+void termfb_putc_ansi(char c);
+void termfb_write_ansi(const char *s);
+
 void termfb_write_hex_u64(uint64_t v);

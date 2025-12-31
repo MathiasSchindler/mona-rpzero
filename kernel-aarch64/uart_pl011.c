@@ -12,6 +12,8 @@
 #define FR_TXFF (1u << 5)
 #define FR_RXFE (1u << 4)
 
+static void (*g_uart_mirror_putc)(char c) = 0;
+
 static inline volatile uint32_t *uart_reg(uint32_t off) {
     return (volatile uint32_t *)((uintptr_t)UART_PL011_BASE + off);
 }
@@ -36,15 +38,31 @@ void uart_init(void) {
     (void)FR_RXFE;
 }
 
-void uart_putc(char c) {
-    if (c == '\n') {
-        uart_putc('\r');
-    }
+void uart_set_mirror(void (*mirror_putc)(char c)) {
+    g_uart_mirror_putc = mirror_putc;
+}
 
+static void uart_putc_hw(char c) {
     while ((*uart_reg(UART_FR) & FR_TXFF) != 0) {
         /* spin */
     }
     *uart_reg(UART_DR) = (uint32_t)c;
+}
+
+void uart_putc(char c) {
+    if (c == '\n') {
+        uart_putc_hw('\r');
+        uart_putc_hw('\n');
+        if (g_uart_mirror_putc) {
+            g_uart_mirror_putc('\n');
+        }
+        return;
+    }
+
+    uart_putc_hw(c);
+    if (g_uart_mirror_putc) {
+        g_uart_mirror_putc(c);
+    }
 }
 
 void uart_write(const char *s) {

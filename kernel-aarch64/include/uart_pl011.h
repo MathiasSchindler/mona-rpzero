@@ -15,6 +15,9 @@ void uart_putc(char c);
 void uart_write(const char *s);
 void uart_write_hex_u64(uint64_t v);
 
+/* Optional: mirror each transmitted character to another sink (e.g., fb console). */
+void uart_set_mirror(void (*mirror_putc)(char c));
+
 /* Blocking / non-blocking receive helpers (for stdin via read(0)). */
 int uart_try_getc(char *out);
 char uart_getc_blocking(void);

@@ -62,6 +62,7 @@ void kmain(unsigned long dtb_ptr) {
         if (fb_init_from_mailbox(FB_REQ_W, FB_REQ_H, FB_REQ_BPP) == 0) {
             /* Bring up a very small framebuffer console for early gfx testing. */
             (void)termfb_init(0x00ffffffu, 0x00203040u);
+            uart_set_mirror(termfb_putc_ansi);
             termfb_write("mona-rpzero framebuffer console\n");
 
             const fb_info_t *fb = fb_get_info();
@@ -71,6 +72,9 @@ void kmain(unsigned long dtb_ptr) {
             termfb_write(" pitch="); termfb_write_hex_u64(fb->pitch);
             termfb_write("\n");
             termfb_write("(UART still active)\n\n");
+
+            /* Quick ANSI smoke test (colors + reset). */
+            termfb_write_ansi("\x1b[32mANSI ok\x1b[0m\n\n");
         }
     #endif
 

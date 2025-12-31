@@ -118,6 +118,58 @@ static uint32_t g_cur_x;
 static uint32_t g_cur_y;
 static uint32_t g_fg;
 static uint32_t g_bg;
+static uint32_t g_default_fg;
+static uint32_t g_default_bg;
+
+typedef enum termfb_ansi_state {
+    TERMFB_ANSI_NORMAL = 0,
+    TERMFB_ANSI_ESC,
+    TERMFB_ANSI_CSI,
+} termfb_ansi_state_t;
+
+static termfb_ansi_state_t g_ansi_state = TERMFB_ANSI_NORMAL;
+static uint32_t g_ansi_params[4];
+static uint32_t g_ansi_param_count = 0;
+static uint32_t g_ansi_current = 0;
+static int g_ansi_have_current = 0;
+
+static uint32_t termfb_ansi_color_to_xrgb8888(uint32_t color_idx, int bright) {
+    /* Basic ANSI 8-color palette. */
+    static const uint32_t base[8] = {
+        0x00000000u, /* black */
+        0x00aa0000u, /* red */
+        0x0000aa00u, /* green */
+        0x00aa5500u, /* yellow */
+        0x000000aau, /* blue */
+        0x00aa00aau, /* magenta */
+        0x0000aaaau, /* cyan */
+        0x00aaaaaau, /* white (dim) */
+    };
+    static const uint32_t brightv[8] = {
+        0x00555555u,
+        0x00ff5555u,
+        0x0055ff55u,
+        0x00ffff55u,
+        0x005555ffu,
+        0x00ff55ffu,
+        0x0055ffffu,
+        0x00ffffffu,
+    };
+
+    color_idx &= 7u;
+    return bright ? brightv[color_idx] : base[color_idx];
+}
+
+static void termfb_set_cursor_1based(uint32_t row1, uint32_t col1) {
+    if (row1 == 0) row1 = 1;
+    if (col1 == 0) col1 = 1;
+    uint32_t y = row1 - 1u;
+    uint32_t x = col1 - 1u;
+    if (y >= g_rows) y = g_rows - 1u;
+    if (x >= g_cols) x = g_cols - 1u;
+    g_cur_y = y;
+    g_cur_x = x;
+}
 
 static const uint8_t *termfb_glyph_for(char c) {
     uint32_t n = (uint32_t)(sizeof(g_glyphs) / sizeof(g_glyphs[0]));
@@ -212,9 +264,16 @@ int termfb_init(uint32_t fg_xrgb8888, uint32_t bg_xrgb8888) {
 
     g_fg = fg_xrgb8888;
     g_bg = bg_xrgb8888;
+    g_default_fg = fg_xrgb8888;
+    g_default_bg = bg_xrgb8888;
 
     g_cur_x = 0;
     g_cur_y = 0;
+
+    g_ansi_state = TERMFB_ANSI_NORMAL;
+    g_ansi_param_count = 0;
+    g_ansi_current = 0;
+    g_ansi_have_current = 0;
 
     termfb_clear_pixels();
     return 0;
@@ -229,6 +288,61 @@ void termfb_clear(void) {
     g_cur_x = 0;
     g_cur_y = 0;
     termfb_clear_pixels();
+}
+
+static void termfb_ansi_push_param(uint32_t v) {
+    if (g_ansi_param_count < (uint32_t)(sizeof(g_ansi_params) / sizeof(g_ansi_params[0]))) {
+        g_ansi_params[g_ansi_param_count++] = v;
+    }
+}
+
+static void termfb_ansi_finish_param_if_needed(void) {
+    if (g_ansi_have_current || g_ansi_param_count == 0) {
+        termfb_ansi_push_param(g_ansi_have_current ? g_ansi_current : 0u);
+    }
+    g_ansi_current = 0;
+    g_ansi_have_current = 0;
+}
+
+static void termfb_ansi_handle_csi(char final_byte) {
+    /* Ensure at least one parameter exists (defaults to 0). */
+    termfb_ansi_finish_param_if_needed();
+
+    if (final_byte == 'm') {
+        /* SGR: colors only (0 reset, 30-37 fg, 40-47 bg, 90-97 fg bright, 100-107 bg bright). */
+        for (uint32_t i = 0; i < g_ansi_param_count; i++) {
+            uint32_t p = g_ansi_params[i];
+            if (p == 0) {
+                g_fg = g_default_fg;
+                g_bg = g_default_bg;
+            } else if (p >= 30 && p <= 37) {
+                g_fg = termfb_ansi_color_to_xrgb8888(p - 30u, 0);
+            } else if (p >= 40 && p <= 47) {
+                g_bg = termfb_ansi_color_to_xrgb8888(p - 40u, 0);
+            } else if (p >= 90 && p <= 97) {
+                g_fg = termfb_ansi_color_to_xrgb8888(p - 90u, 1);
+            } else if (p >= 100 && p <= 107) {
+                g_bg = termfb_ansi_color_to_xrgb8888(p - 100u, 1);
+            }
+        }
+    } else if (final_byte == 'J') {
+        /* Erase in display: support only 2 (clear entire screen). */
+        uint32_t mode = g_ansi_params[0];
+        if (mode == 2u) {
+            termfb_clear();
+        }
+    } else if (final_byte == 'H' || final_byte == 'f') {
+        /* CUP: cursor position (row;col), defaults to 1;1. */
+        uint32_t row1 = (g_ansi_param_count >= 1) ? g_ansi_params[0] : 1u;
+        uint32_t col1 = (g_ansi_param_count >= 2) ? g_ansi_params[1] : 1u;
+        termfb_set_cursor_1based(row1, col1);
+    }
+
+    /* Reset CSI state. */
+    g_ansi_param_count = 0;
+    g_ansi_current = 0;
+    g_ansi_have_current = 0;
+    g_ansi_state = TERMFB_ANSI_NORMAL;
 }
 
 void termfb_putc(char c) {
@@ -277,6 +391,57 @@ void termfb_putc(char c) {
             termfb_scroll_one();
             g_cur_y = g_rows - 1u;
         }
+    }
+}
+
+void termfb_putc_ansi(char c) {
+    if (!g_info || !g_info->virt) return;
+
+    if (g_ansi_state == TERMFB_ANSI_NORMAL) {
+        if ((unsigned char)c == 0x1B) {
+            g_ansi_state = TERMFB_ANSI_ESC;
+            return;
+        }
+        termfb_putc(c);
+        return;
+    }
+
+    if (g_ansi_state == TERMFB_ANSI_ESC) {
+        if (c == '[') {
+            g_ansi_state = TERMFB_ANSI_CSI;
+            g_ansi_param_count = 0;
+            g_ansi_current = 0;
+            g_ansi_have_current = 0;
+            return;
+        }
+
+        /* Unknown ESC sequence: ignore and return to normal. */
+        g_ansi_state = TERMFB_ANSI_NORMAL;
+        return;
+    }
+
+    /* CSI */
+    if (c >= '0' && c <= '9') {
+        g_ansi_current = g_ansi_current * 10u + (uint32_t)(c - '0');
+        g_ansi_have_current = 1;
+        return;
+    }
+
+    if (c == ';') {
+        termfb_ansi_push_param(g_ansi_have_current ? g_ansi_current : 0u);
+        g_ansi_current = 0;
+        g_ansi_have_current = 0;
+        return;
+    }
+
+    /* Final byte */
+    termfb_ansi_handle_csi(c);
+}
+
+void termfb_write_ansi(const char *s) {
+    if (!s) return;
+    while (*s) {
+        termfb_putc_ansi(*s++);
     }
 }
 
