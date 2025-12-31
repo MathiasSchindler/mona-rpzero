@@ -185,6 +185,11 @@ Full terminal UX needs input beyond UART.
 
 Short-term options:
 - Keep input over UART (no keyboard).
+- In QEMU, you can at least avoid the separate host terminal by running the UART on a QEMU
+  “virtual console” (in-window serial): `make run-gfx-vc`.
+  - This makes the host terminal mostly quiet (UART is no longer `-serial stdio`).
+  - The QEMU monitor is disabled by default for this mode so the console switch keys land on
+    the UART.
 - In QEMU, consider a simple emulated HID path if available on raspi3b machine.
 
 Long-term (hardware):
@@ -201,6 +206,9 @@ Ensure your QEMU run path enables a display:
 - If you have a script (e.g. `tools/run-qemu-raspi3b.sh`), ensure it uses something like:
   - `-display cocoa` (macOS) or `-display sdl/gtk` depending on your setup
   - (Optionally) `-serial stdio` stays enabled
+  - If you want input without relying on terminal focus: `-serial vc`
+    - If you don't see the serial text immediately, switch to the virtual console in the
+      QEMU GUI (often Ctrl-Alt-2; on macOS this may be Ctrl-Option-2)
 
 Add a small doc snippet to the script/comments:
 - “Framebuffer output appears in QEMU window; UART still on stdio.”

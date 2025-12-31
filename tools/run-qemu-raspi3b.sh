@@ -8,6 +8,8 @@ Usage:
     [--sd sd.img] \
     --kernel path/to/kernel8.img \
     --dtb path/to/bcm2710-rpi-3-b.dtb \
+    [--serial stdio|vc] \
+    [--monitor none|stdio|vc] \
     --append "console=ttyAMA0 root=/dev/mmcblk0p2 rootwait"
 
 Notes:
@@ -17,6 +19,13 @@ Notes:
   - `--append` is passed as Linux kernel command line; for a non-Linux kernel it
     may be ignored.
   - Exit QEMU: Ctrl+A then X.
+  - `--serial vc` puts the UART into a QEMU in-window "virtual console" (handy on macOS,
+    avoids relying on the terminal's stdin focus). If you don't see it immediately, switch
+    to the virtual console inside the QEMU window (often Ctrl-Alt-2; on macOS this may be
+    Ctrl-Option-2 depending on your keyboard settings).
+  - When `--serial vc` is used, this script disables the QEMU monitor by default so that the
+    console switch keys land on the UART. You can override with `--monitor stdio` or
+    `--monitor vc`.
 EOF
 }
 
@@ -27,6 +36,8 @@ APPEND=""
 MEM=1024
 GFX=0
 DISPLAY_BACKEND=""
+SERIAL_BACKEND=""
+MONITOR_BACKEND=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -37,6 +48,8 @@ while [[ $# -gt 0 ]]; do
     --mem) MEM="$2"; shift 2;;
     --graphic|--gfx) GFX=1; shift;;
     --display) DISPLAY_BACKEND="$2"; GFX=1; shift 2;;
+    --serial) SERIAL_BACKEND="$2"; shift 2;;
+    --monitor) MONITOR_BACKEND="$2"; shift 2;;
     -h|--help) usage; exit 0;;
     *) echo "Unknown argument: $1" >&2; usage; exit 2;;
   esac
@@ -63,11 +76,54 @@ cmd=(
 )
 
 if [[ "$GFX" -eq 1 ]]; then
-  # Keep UART on stdio while enabling a display window.
+  # Keep UART enabled while also opening a display window.
   if [[ -z "$DISPLAY_BACKEND" ]]; then
     DISPLAY_BACKEND="cocoa"
   fi
-  cmd+=( -display "$DISPLAY_BACKEND" -serial stdio )
+  if [[ -z "$SERIAL_BACKEND" ]]; then
+    SERIAL_BACKEND="stdio"
+  fi
+
+  # In graphical mode, QEMU also creates a monitor. When using `-serial vc` we usually want
+  # the in-window console switch (Ctrl-Alt/Option-2) to land on the UART, not the monitor.
+  # Default to disabling the monitor unless explicitly requested.
+  if [[ "$SERIAL_BACKEND" == "vc" && -z "$MONITOR_BACKEND" ]]; then
+    MONITOR_BACKEND="none"
+  fi
+
+  # If we use the in-window serial console, ensure the GUI makes console switching discoverable.
+  # Note: `show-tabs` is supported by gtk/sdl displays (not cocoa).
+  if [[ "$SERIAL_BACKEND" == "vc" ]]; then
+    case "$DISPLAY_BACKEND" in
+      gtk*|sdl*)
+        if [[ "$DISPLAY_BACKEND" != *"show-tabs="* ]]; then
+          DISPLAY_BACKEND+="${DISPLAY_BACKEND:+,}show-tabs=on"
+        fi
+        ;;
+    esac
+  fi
+
+  case "$SERIAL_BACKEND" in
+    stdio|vc)
+      cmd+=( -display "$DISPLAY_BACKEND" -serial "$SERIAL_BACKEND" )
+      ;;
+    *)
+      echo "Unknown --serial backend: $SERIAL_BACKEND (expected: stdio|vc)" >&2
+      exit 2
+      ;;
+  esac
+
+  if [[ -n "$MONITOR_BACKEND" ]]; then
+    case "$MONITOR_BACKEND" in
+      none|stdio|vc)
+        cmd+=( -monitor "$MONITOR_BACKEND" )
+        ;;
+      *)
+        echo "Unknown --monitor backend: $MONITOR_BACKEND (expected: none|stdio|vc)" >&2
+        exit 2
+        ;;
+    esac
+  fi
 else
   cmd+=( -nographic )
 fi
