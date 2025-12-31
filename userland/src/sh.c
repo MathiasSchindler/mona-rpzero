@@ -7,6 +7,7 @@ static int run_pipeline(char **av, int pipe_pos);
 
 static int is_space(char c);
 
+static int format_prompt(char *out, int cap);
 static void print_prompt(void);
 
 typedef struct {
@@ -25,6 +26,8 @@ static int find_token_start(const char *buf, int n);
 static int is_first_word_segment(const char *buf, int tok_start);
 static int do_tab_complete(char *buf, int *n_inout, int cap, int show_list);
 
+static uint64_t cstr_len_u64_local(const char *s);
+
 enum {
     LINE_MAX = 256,
     HIST_MAX = 16,
@@ -38,13 +41,14 @@ static void tty_putc(char c) {
     (void)sys_write(1, &c, 1);
 }
 
-static void tty_erase_chars(int n) {
-    /* erase the last n characters from the current cursor position */
-    for (int i = 0; i < n; i++) {
-        tty_putc('\b');
-        tty_putc(' ');
-        tty_putc('\b');
-    }
+static void tty_write_str(const char *s) {
+    if (!s) return;
+    (void)sys_write(1, s, cstr_len_u64_local(s));
+}
+
+static void tty_write_buf(const char *s, int n) {
+    if (!s || n <= 0) return;
+    (void)sys_write(1, s, (uint64_t)n);
 }
 
 static uint64_t cstr_len_u64_local(const char *s) {
@@ -452,18 +456,45 @@ static int do_tab_complete(char *buf, int *n_inout, int cap, int show_list) {
     return 1;
 }
 
-static int read_line(char *buf, int cap) {
-    int n = 0;
+static void redraw_line(const char *prompt, const char *buf, int len, int pos, int *last_len_io) {
+    if (!prompt) prompt = "";
+    if (!buf) buf = "";
+    if (len < 0) len = 0;
+    if (pos < 0) pos = 0;
+    if (pos > len) pos = len;
+
+    int last_len = last_len_io ? *last_len_io : 0;
+    if (last_len < 0) last_len = 0;
+
+    tty_putc('\r');
+    tty_write_str(prompt);
+    tty_write_buf(buf, len);
+
+    int extra = last_len - len;
+    for (int i = 0; i < extra; i++) tty_putc(' ');
+
+    tty_putc('\r');
+    tty_write_str(prompt);
+    tty_write_buf(buf, pos);
+
+    if (last_len_io) *last_len_io = len;
+}
+
+static int read_line(const char *prompt, char *buf, int cap) {
+    int len = 0;
+    int pos = 0;
+    int last_draw_len = 0;
 
     /* History browsing state (local to a single line edit). */
     int hist_pos = 0; /* 0 = not browsing; 1 = newest; 2 = one older; ... */
     char saved[LINE_MAX];
+    int saved_len = 0;
     saved[0] = '\0';
 
     /* TAB completion state: first TAB extends common prefix, second TAB lists candidates. */
     int tab_pending = 0;
 
-    while (n + 1 < cap) {
+    while (len + 1 < cap) {
         char c = 0;
         long rc = (long)sys_read(0, &c, 1);
         if (rc < 0) return -1;
@@ -472,21 +503,13 @@ static int read_line(char *buf, int cap) {
         if (c == '\r') c = '\n';
 
         if (c == '\n') {
-            buf[n] = '\0';
+            buf[len] = '\0';
             sys_puts("\n");
-            return n;
+            return len;
         }
 
-        if (c == '\t') {
-            int ambiguous = do_tab_complete(buf, &n, cap, tab_pending);
-            tab_pending = ambiguous ? 1 : 0;
-            /* Any completion action cancels history browsing. */
-            hist_pos = 0;
-            continue;
-        }
-
-        /* Arrow keys: typically ESC [ A/B. */
-        if (c == 0x1b) {
+        /* Arrow keys and friends: ESC [ A/B/C/D/H/F (or ESC O ...). */
+        if ((unsigned char)c == 0x1b) {
             char c2 = 0;
             char c3 = 0;
             long r2 = (long)sys_read(0, &c2, 1);
@@ -500,22 +523,22 @@ static int read_line(char *buf, int cap) {
                 if (g_hist_count == 0) continue;
                 if (hist_pos == 0) {
                     /* Save current line once when starting history browse. */
-                    int sn = n;
-                    if (sn + 1 > (int)sizeof(saved)) sn = (int)sizeof(saved) - 1;
-                    for (int i = 0; i < sn; i++) saved[i] = buf[i];
-                    saved[sn] = '\0';
+                    saved_len = len;
+                    if (saved_len + 1 > (int)sizeof(saved)) saved_len = (int)sizeof(saved) - 1;
+                    for (int i = 0; i < saved_len; i++) saved[i] = buf[i];
+                    saved[saved_len] = '\0';
                 }
                 if (hist_pos < g_hist_count) hist_pos++;
                 const char *h = hist_get_from_end(hist_pos - 1);
                 if (!h) continue;
 
-                tty_erase_chars(n);
                 uint64_t hn = cstr_len_u64_local(h);
                 if (hn + 1 > (uint64_t)cap) hn = (uint64_t)cap - 1;
                 for (uint64_t i = 0; i < hn; i++) buf[i] = h[i];
                 buf[hn] = '\0';
-                n = (int)hn;
-                (void)sys_write(1, buf, (uint64_t)n);
+                len = (int)hn;
+                pos = len;
+                redraw_line(prompt, buf, len, pos, &last_draw_len);
                 tab_pending = 0;
                 continue;
             }
@@ -533,13 +556,49 @@ static int read_line(char *buf, int cap) {
                 }
                 if (!h) h = "";
 
-                tty_erase_chars(n);
                 uint64_t hn = cstr_len_u64_local(h);
                 if (hn + 1 > (uint64_t)cap) hn = (uint64_t)cap - 1;
                 for (uint64_t i = 0; i < hn; i++) buf[i] = h[i];
                 buf[hn] = '\0';
-                n = (int)hn;
-                (void)sys_write(1, buf, (uint64_t)n);
+                len = (int)hn;
+                pos = len;
+                redraw_line(prompt, buf, len, pos, &last_draw_len);
+                tab_pending = 0;
+                continue;
+            }
+
+            if (c3 == 'C') {
+                /* Right */
+                if (pos < len) pos++;
+                redraw_line(prompt, buf, len, pos, &last_draw_len);
+                hist_pos = 0;
+                tab_pending = 0;
+                continue;
+            }
+
+            if (c3 == 'D') {
+                /* Left */
+                if (pos > 0) pos--;
+                redraw_line(prompt, buf, len, pos, &last_draw_len);
+                hist_pos = 0;
+                tab_pending = 0;
+                continue;
+            }
+
+            if (c3 == 'H') {
+                /* Home */
+                pos = 0;
+                redraw_line(prompt, buf, len, pos, &last_draw_len);
+                hist_pos = 0;
+                tab_pending = 0;
+                continue;
+            }
+
+            if (c3 == 'F') {
+                /* End */
+                pos = len;
+                redraw_line(prompt, buf, len, pos, &last_draw_len);
+                hist_pos = 0;
                 tab_pending = 0;
                 continue;
             }
@@ -547,27 +606,97 @@ static int read_line(char *buf, int cap) {
             continue;
         }
 
-        /* Basic backspace handling */
-        if (c == 0x7f || c == '\b') {
-            if (n > 0) {
-                n--;
-                sys_puts("\b \b");
+        if (c == '\t') {
+            /* Keep completion simple: operate on end-of-line. */
+            if (pos != len) {
+                pos = len;
+                redraw_line(prompt, buf, len, pos, &last_draw_len);
             }
-            /* Editing cancels history browsing. */
+            int ambiguous = do_tab_complete(buf, &len, cap, tab_pending);
+            pos = len;
+            redraw_line(prompt, buf, len, pos, &last_draw_len);
+            tab_pending = ambiguous ? 1 : 0;
+            hist_pos = 0;
+            continue;
+        }
+
+        /* Ctrl-A: beginning of line. */
+        if (c == 0x01) {
+            pos = 0;
+            redraw_line(prompt, buf, len, pos, &last_draw_len);
             hist_pos = 0;
             tab_pending = 0;
             continue;
         }
 
-        buf[n++] = c;
-        (void)sys_write(1, &c, 1);
-        /* Editing cancels history browsing. */
+        /* Ctrl-E: end of line. */
+        if (c == 0x05) {
+            pos = len;
+            redraw_line(prompt, buf, len, pos, &last_draw_len);
+            hist_pos = 0;
+            tab_pending = 0;
+            continue;
+        }
+
+        /* Ctrl-U: kill line. */
+        if (c == 0x15) {
+            len = 0;
+            pos = 0;
+            buf[0] = '\0';
+            redraw_line(prompt, buf, len, pos, &last_draw_len);
+            hist_pos = 0;
+            tab_pending = 0;
+            continue;
+        }
+
+        /* Basic backspace handling (delete char before cursor). */
+        if ((unsigned char)c == 0x7f || c == '\b') {
+            if (pos > 0) {
+                for (int i = pos - 1; i < len - 1; i++) buf[i] = buf[i + 1];
+                len--;
+                pos--;
+                buf[len] = '\0';
+                redraw_line(prompt, buf, len, pos, &last_draw_len);
+            }
+            hist_pos = 0;
+            tab_pending = 0;
+            continue;
+        }
+
+        /* Ctrl-D: delete char at cursor (or ignore on empty line). */
+        if (c == 0x04) {
+            if (pos < len) {
+                for (int i = pos; i < len - 1; i++) buf[i] = buf[i + 1];
+                len--;
+                buf[len] = '\0';
+                redraw_line(prompt, buf, len, pos, &last_draw_len);
+            }
+            hist_pos = 0;
+            tab_pending = 0;
+            continue;
+        }
+
+        /* Printable / raw byte insert at cursor. */
+        if (len + 1 < cap) {
+            if (pos == len) {
+                buf[len++] = c;
+                pos++;
+                buf[len] = '\0';
+            } else {
+                for (int i = len; i > pos; i--) buf[i] = buf[i - 1];
+                buf[pos++] = c;
+                len++;
+                buf[len] = '\0';
+            }
+            redraw_line(prompt, buf, len, pos, &last_draw_len);
+        }
+
         hist_pos = 0;
         tab_pending = 0;
     }
 
-    buf[n] = '\0';
-    return n;
+    buf[len] = '\0';
+    return len;
 }
 
 static int run_script(char *cmd, char **av, int av_cap) {
@@ -756,6 +885,12 @@ static int run_pipeline(char **av, int pipe_pos) {
 }
 
 static void print_prompt(void) {
+    char prompt[256];
+    if (format_prompt(prompt, (int)sizeof(prompt)) == 0) {
+        sys_puts(prompt);
+        return;
+    }
+
     char cwd[256];
     uint64_t rc = sys_getcwd(cwd, sizeof(cwd));
     if ((int64_t)rc < 0) {
@@ -765,6 +900,22 @@ static void print_prompt(void) {
 
     sys_puts(cwd);
     sys_puts(" > ");
+}
+
+static int format_prompt(char *out, int cap) {
+    if (!out || cap <= 0) return -1;
+    out[0] = '\0';
+
+    char cwd[256];
+    uint64_t rc = sys_getcwd(cwd, sizeof(cwd));
+    const char *p = ((int64_t)rc < 0) ? "?" : cwd;
+
+    int n = 0;
+    for (int i = 0; p[i] && n + 1 < cap; i++) out[n++] = p[i];
+    const char *suf = " > ";
+    for (int i = 0; suf[i] && n + 1 < cap; i++) out[n++] = suf[i];
+    out[n] = '\0';
+    return 0;
 }
 
 int main(int argc, char **argv, char **envp) {
@@ -788,8 +939,10 @@ int main(int argc, char **argv, char **envp) {
     }
 
     for (;;) {
-        print_prompt();
-        int n = read_line(line, (int)sizeof(line));
+        char prompt[256];
+        (void)format_prompt(prompt, (int)sizeof(prompt));
+        sys_puts(prompt);
+        int n = read_line(prompt, line, (int)sizeof(line));
         if (n == -2) {
             sys_puts("\n");
             sys_exit_group(0);

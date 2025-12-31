@@ -181,16 +181,43 @@ static const uint8_t *termfb_glyph_for(char c) {
     return g_glyph_unknown;
 }
 
-static inline volatile uint32_t *termfb_row_ptr(uint32_t y) {
-    return (volatile uint32_t *)((uintptr_t)g_info->virt + (uintptr_t)y * (uintptr_t)g_info->pitch);
+static inline uint32_t termfb_map_view_y_to_phys(uint32_t view_y) {
+    if (!g_info) return view_y;
+    if (g_info->virt_height == 0) return view_y;
+    return (uint32_t)(((uint64_t)view_y + (uint64_t)g_info->y_offset) % (uint64_t)g_info->virt_height);
+}
+
+static inline volatile uint32_t *termfb_row_ptr_phys(uint32_t phys_y) {
+    return (volatile uint32_t *)((uintptr_t)g_info->virt + (uintptr_t)phys_y * (uintptr_t)g_info->pitch);
+}
+
+static inline volatile uint32_t *termfb_row_ptr_view(uint32_t view_y) {
+    return termfb_row_ptr_phys(termfb_map_view_y_to_phys(view_y));
 }
 
 static void termfb_clear_pixels(void) {
     if (!g_info || !g_info->virt) return;
     if (g_info->bpp != 32) return;
 
-    for (uint32_t y = 0; y < g_info->height; y++) {
-        volatile uint32_t *row = termfb_row_ptr(y);
+    uint32_t total_h = g_info->virt_height ? g_info->virt_height : g_info->height;
+    for (uint32_t y = 0; y < total_h; y++) {
+        volatile uint32_t *row = termfb_row_ptr_phys(y);
+        for (uint32_t x = 0; x < g_info->width; x++) {
+            row[x] = g_bg;
+        }
+    }
+}
+
+static void termfb_clear_phys_rows(uint32_t phys_y_start, uint32_t rows) {
+    if (!g_info || !g_info->virt) return;
+    if (g_info->bpp != 32) return;
+    if (rows == 0) return;
+
+    uint32_t total_h = g_info->virt_height ? g_info->virt_height : g_info->height;
+    for (uint32_t ry = 0; ry < rows; ry++) {
+        uint32_t y = (phys_y_start + ry);
+        if (total_h != 0) y %= total_h;
+        volatile uint32_t *row = termfb_row_ptr_phys(y);
         for (uint32_t x = 0; x < g_info->width; x++) {
             row[x] = g_bg;
         }
@@ -201,12 +228,25 @@ static void termfb_scroll_one(void) {
     if (!g_info || !g_info->virt) return;
     if (g_info->bpp != 32) return;
 
+    /* Prefer hardware scrolling via virtual offset to avoid large memcpy on device memory. */
+    if (g_info->virt_height > g_info->height && (g_info->height % TERMFB_FONT_H) == 0) {
+        uint32_t total_h = g_info->virt_height;
+        uint32_t new_off = (g_info->y_offset + TERMFB_FONT_H) % total_h;
+
+        if (fb_set_virtual_offset(0, new_off) == 0) {
+            /* Clear the newly exposed bottom character row. */
+            uint32_t bottom_phys = (new_off + g_info->height - TERMFB_FONT_H) % total_h;
+            termfb_clear_phys_rows(bottom_phys, TERMFB_FONT_H);
+            return;
+        }
+    }
+
     uint32_t rows_to_move = g_info->height - TERMFB_FONT_H;
     uint32_t words_per_row = g_info->pitch / 4u;
 
     for (uint32_t y = 0; y < rows_to_move; y++) {
-        volatile uint32_t *dst = termfb_row_ptr(y);
-        volatile uint32_t *src = termfb_row_ptr(y + TERMFB_FONT_H);
+        volatile uint32_t *dst = termfb_row_ptr_phys(y);
+        volatile uint32_t *src = termfb_row_ptr_phys(y + TERMFB_FONT_H);
         for (uint32_t x = 0; x < words_per_row; x++) {
             dst[x] = src[x];
         }
@@ -214,7 +254,7 @@ static void termfb_scroll_one(void) {
 
     /* Clear last character row (TERMFB_FONT_H pixel rows). */
     for (uint32_t y = rows_to_move; y < g_info->height; y++) {
-        volatile uint32_t *row = termfb_row_ptr(y);
+        volatile uint32_t *row = termfb_row_ptr_phys(y);
         for (uint32_t x = 0; x < g_info->width; x++) {
             row[x] = g_bg;
         }
@@ -235,7 +275,7 @@ static void termfb_draw_char_cell(uint32_t cell_x, uint32_t cell_y, char c) {
 
     for (uint32_t ry = 0; ry < 7u; ry++) {
         uint8_t bits = rows[ry] & 0x1Fu;
-        volatile uint32_t *row = termfb_row_ptr(py0 + ry);
+        volatile uint32_t *row = termfb_row_ptr_view(py0 + ry);
 
         for (uint32_t rx = 0; rx < 5u; rx++) {
             uint32_t mask = 1u << (4u - rx);
@@ -247,7 +287,7 @@ static void termfb_draw_char_cell(uint32_t cell_x, uint32_t cell_y, char c) {
     }
 
     /* Bottom spacing row */
-    volatile uint32_t *bottom = termfb_row_ptr(py0 + 7u);
+    volatile uint32_t *bottom = termfb_row_ptr_view(py0 + 7u);
     for (uint32_t rx = 0; rx < TERMFB_FONT_W; rx++) {
         bottom[px0 + rx] = g_bg;
     }

@@ -19,6 +19,10 @@
 #define FB_REQ_BPP 32u
 #endif
 
+#ifndef FB_REQ_VIRT_H
+#define FB_REQ_VIRT_H (FB_REQ_H * 2u)
+#endif
+
 extern unsigned char __kernel_start[];
 extern unsigned char __kernel_end[];
 
@@ -59,7 +63,7 @@ void kmain(unsigned long dtb_ptr) {
 
     #ifdef ENABLE_FB
         /* Best-effort framebuffer bring-up (QEMU-first). */
-        if (fb_init_from_mailbox(FB_REQ_W, FB_REQ_H, FB_REQ_BPP) == 0) {
+        if (fb_init_from_mailbox_ex(FB_REQ_W, FB_REQ_H, FB_REQ_W, FB_REQ_VIRT_H, FB_REQ_BPP) == 0) {
             /* Bring up a very small framebuffer console for early gfx testing. */
             (void)termfb_init(0x00ffffffu, 0x00203040u);
             uart_set_mirror(termfb_putc_ansi);
@@ -68,6 +72,7 @@ void kmain(unsigned long dtb_ptr) {
             const fb_info_t *fb = fb_get_info();
             termfb_write("fb: w="); termfb_write_hex_u64(fb->width);
             termfb_write(" h="); termfb_write_hex_u64(fb->height);
+            termfb_write(" vh="); termfb_write_hex_u64(fb->virt_height);
             termfb_write(" bpp="); termfb_write_hex_u64(fb->bpp);
             termfb_write(" pitch="); termfb_write_hex_u64(fb->pitch);
             termfb_write("\n");
