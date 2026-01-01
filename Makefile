@@ -43,8 +43,15 @@ FB_BPP ?= 32
 # Larger values use more RAM but make long outputs smoother.
 FB_VIRT_MULT ?= 4
 
-# QEMU display backend for graphics runs (macOS default: cocoa).
+# QEMU display backend for graphics runs.
+# - macOS: cocoa
+# - Linux: gtk (cocoa is macOS-only)
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
 QEMU_DISPLAY ?= cocoa
+else
+QEMU_DISPLAY ?= gtk
+endif
 
 # Optional: which userland tool to embed as the EL0 payload.
 USERPROG ?= init

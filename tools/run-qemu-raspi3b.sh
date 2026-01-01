@@ -85,7 +85,10 @@ cmd=(
 if [[ "$GFX" -eq 1 ]]; then
   # Keep UART enabled while also opening a display window.
   if [[ -z "$DISPLAY_BACKEND" ]]; then
-    DISPLAY_BACKEND="cocoa"
+    case "$(uname -s)" in
+      Darwin) DISPLAY_BACKEND="cocoa";;
+      *) DISPLAY_BACKEND="gtk";;
+    esac
   fi
   if [[ -z "$SERIAL_BACKEND" ]]; then
     SERIAL_BACKEND="stdio"
