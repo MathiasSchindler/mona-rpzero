@@ -48,3 +48,6 @@ uint64_t sys_execve(trap_frame_t *tf, uint64_t pathname_user, uint64_t argv_user
 uint64_t sys_clone(trap_frame_t *tf, uint64_t flags, uint64_t child_stack, uint64_t ptid, uint64_t ctid, uint64_t tls, uint64_t elr);
 uint64_t sys_wait4(trap_frame_t *tf, int64_t pid_req, uint64_t wstatus_user, uint64_t options, uint64_t rusage_user, uint64_t elr);
 int handle_exit_and_maybe_switch(trap_frame_t *tf, uint64_t code);
+
+/* mona-specific: read kernel log ring buffer (dmesg). */
+uint64_t sys_mona_dmesg(uint64_t buf_user, uint64_t len, uint64_t flags);

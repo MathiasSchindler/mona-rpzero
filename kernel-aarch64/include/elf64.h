@@ -52,8 +52,9 @@ typedef struct {
 /* Returns 0 on success, -1 on invalid ELF or out-of-range segments. */
 int elf64_load_etexec(const uint8_t *img,
                       size_t img_size,
-                      uint64_t user_base,
+                      uint64_t user_va_base,
                       uint64_t user_size,
+                      uint64_t user_pa_base,
                       uint64_t *entry_out,
                       uint64_t *min_loaded_va_out,
                       uint64_t *max_loaded_va_out);

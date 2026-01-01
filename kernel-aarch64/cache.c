@@ -161,22 +161,35 @@ void cache_sync_icache_for_range(uint64_t start, uint64_t size) {
         return;
     }
 
-    /* CTR_EL0.DminLine (bits [19:16]) gives log2(words) => bytes = 4 << n. */
+    /*
+     * CTR_EL0:
+     *  - DminLine (bits [19:16]): log2(words) => bytes = 4 << n
+     *  - IminLine (bits [3:0]):   log2(words) => bytes = 4 << n
+     */
     uint64_t ctr = read_ctr_el0();
-    uint64_t dminline_words_log2 = (ctr >> 16) & 0xF;
-    uint64_t line = 4ull << dminline_words_log2;
-    if (line < 16) line = 16;
-    if (line > 256) line = 256;
+    uint64_t dminline_words_log2 = (ctr >> 16) & 0xFull;
+    uint64_t iminline_words_log2 = ctr & 0xFull;
 
-    uint64_t s = start & ~(line - 1);
-    uint64_t e = (start + size + (line - 1)) & ~(line - 1);
+    uint64_t dline = 4ull << dminline_words_log2;
+    uint64_t iline = 4ull << iminline_words_log2;
 
-    for (uint64_t p = s; p < e; p += line) {
+    if (dline < 16) dline = 16;
+    if (dline > 256) dline = 256;
+    if (iline < 16) iline = 16;
+    if (iline > 256) iline = 256;
+
+    uint64_t s_d = start & ~(dline - 1);
+    uint64_t e_d = (start + size + (dline - 1)) & ~(dline - 1);
+
+    for (uint64_t p = s_d; p < e_d; p += dline) {
         dc_cvau(p);
     }
     dsb_ish();
 
-    for (uint64_t p = s; p < e; p += line) {
+    uint64_t s_i = start & ~(iline - 1);
+    uint64_t e_i = (start + size + (iline - 1)) & ~(iline - 1);
+
+    for (uint64_t p = s_i; p < e_i; p += iline) {
         ic_ivau(p);
     }
     dsb_ish();

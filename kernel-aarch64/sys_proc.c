@@ -15,6 +15,13 @@
 #include "sys_util.h"
 #include "uart_pl011.h"
 
+static void byte_copy(void *dst, const uint8_t *src, uint64_t n) {
+    uint8_t *d = (uint8_t *)dst;
+    for (uint64_t i = 0; i < n; i++) {
+        d[i] = src[i];
+    }
+}
+
 uint64_t sys_brk(uint64_t newbrk) {
     proc_t *cur = &g_procs[g_cur_proc];
 
@@ -297,8 +304,33 @@ uint64_t sys_execve(trap_frame_t *tf, uint64_t pathname_user, uint64_t argv_user
     uint64_t entry = 0;
     uint64_t minva = 0;
     uint64_t maxva = 0;
-    if (elf64_load_etexec(img, (size_t)img_size, USER_REGION_BASE, USER_REGION_SIZE, &entry, &minva, &maxva) != 0) {
+    uint64_t user_pa_base = cur->user_pa_base;
+    if (user_pa_base == 0) {
+        user_pa_base = USER_REGION_BASE;
+    }
+    if (elf64_load_etexec(img, (size_t)img_size, USER_REGION_BASE, USER_REGION_SIZE, user_pa_base, &entry, &minva, &maxva) != 0) {
         return (uint64_t)(-(int64_t)ENOEXEC);
+    }
+
+    /*
+     * Touch a few words of the freshly loaded image via both the user VA and
+     * the backing physical alias. This helps avoid occasional stale/garbled
+     * instruction fetches observed under QEMU when execve() replaces the image.
+     */
+    if (maxva > minva) {
+        volatile uint32_t touch = 0;
+        uint64_t va0 = minva;
+        uint64_t pa0 = user_pa_base + (va0 - USER_REGION_BASE);
+        touch ^= *(volatile uint32_t *)(uintptr_t)va0;
+        touch ^= *(volatile uint32_t *)(uintptr_t)pa0;
+
+        uint64_t va1 = minva + 256u;
+        if (va1 + 4u <= maxva) {
+            uint64_t pa1 = user_pa_base + (va1 - USER_REGION_BASE);
+            touch ^= *(volatile uint32_t *)(uintptr_t)va1;
+            touch ^= *(volatile uint32_t *)(uintptr_t)pa1;
+        }
+        (void)touch;
     }
 
     /* Compute auxiliary vectors derived from the ELF header.
@@ -309,32 +341,42 @@ uint64_t sys_execve(trap_frame_t *tf, uint64_t pathname_user, uint64_t argv_user
     uint64_t at_phnum = 0;
     {
         if (img_size >= sizeof(elf64_ehdr_t)) {
-            const elf64_ehdr_t *eh = (const elf64_ehdr_t *)img;
-            at_phent = (uint64_t)eh->e_phentsize;
-            at_phnum = (uint64_t)eh->e_phnum;
+            elf64_ehdr_t eh;
+            byte_copy(&eh, img, sizeof(eh));
 
-            uint64_t ph_end = eh->e_phoff + (uint64_t)eh->e_phnum * (uint64_t)eh->e_phentsize;
-            if (ph_end >= eh->e_phoff && ph_end <= img_size && eh->e_phentsize == sizeof(elf64_phdr_t)) {
+            at_phent = (uint64_t)eh.e_phentsize;
+            at_phnum = (uint64_t)eh.e_phnum;
+
+            uint64_t ph_end = eh.e_phoff + (uint64_t)eh.e_phnum * (uint64_t)eh.e_phentsize;
+            if (ph_end >= eh.e_phoff && ph_end <= img_size && eh.e_phentsize == sizeof(elf64_phdr_t)) {
                 /* Prefer PT_PHDR if present. */
-                for (uint16_t i = 0; i < eh->e_phnum; i++) {
-                    const elf64_phdr_t *ph = (const elf64_phdr_t *)(img + eh->e_phoff + (uint64_t)i * sizeof(elf64_phdr_t));
-                    if (ph->p_type == PT_PHDR) {
-                        at_phdr = ph->p_vaddr;
+                for (uint16_t i = 0; i < eh.e_phnum; i++) {
+                    elf64_phdr_t ph;
+                    uint64_t ph_off = eh.e_phoff + (uint64_t)i * sizeof(elf64_phdr_t);
+                    if (ph_off + sizeof(ph) > img_size) break;
+                    byte_copy(&ph, img + ph_off, sizeof(ph));
+
+                    if (ph.p_type == PT_PHDR) {
+                        at_phdr = ph.p_vaddr;
                         break;
                     }
                 }
 
                 /* Fallback: program headers are typically within the first PT_LOAD segment. */
                 if (at_phdr == 0) {
-                    for (uint16_t i = 0; i < eh->e_phnum; i++) {
-                        const elf64_phdr_t *ph = (const elf64_phdr_t *)(img + eh->e_phoff + (uint64_t)i * sizeof(elf64_phdr_t));
-                        if (ph->p_type != PT_LOAD) continue;
-                        if (ph->p_offset != 0) continue;
+                    for (uint16_t i = 0; i < eh.e_phnum; i++) {
+                        elf64_phdr_t ph;
+                        uint64_t ph_off = eh.e_phoff + (uint64_t)i * sizeof(elf64_phdr_t);
+                        if (ph_off + sizeof(ph) > img_size) break;
+                        byte_copy(&ph, img + ph_off, sizeof(ph));
+
+                        if (ph.p_type != PT_LOAD) continue;
+                        if (ph.p_offset != 0) continue;
 
                         /* Ensure ELF header + phdr table are within this LOAD in file image. */
-                        uint64_t need_end = eh->e_phoff + (uint64_t)eh->e_phnum * sizeof(elf64_phdr_t);
-                        if (need_end <= ph->p_filesz) {
-                            at_phdr = ph->p_vaddr + eh->e_phoff;
+                        uint64_t need_end = eh.e_phoff + (uint64_t)eh.e_phnum * sizeof(elf64_phdr_t);
+                        if (need_end <= ph.p_filesz) {
+                            at_phdr = ph.p_vaddr + eh.e_phoff;
                             break;
                         }
                     }
@@ -534,6 +576,14 @@ uint64_t sys_execve(trap_frame_t *tf, uint64_t pathname_user, uint64_t argv_user
 
     /* Persist entry point for later reschedules (we may time-slice after execve). */
     g_procs[g_cur_proc].elr = entry;
+
+    /*
+     * execve() replaces the current process image without switching processes.
+     * Since we don't use ASIDs, stale VA-tagged cache lines can survive across
+     * the image replacement. Flush here to ensure EL0 always fetches the newly
+     * loaded instructions/data.
+     */
+    cache_clean_invalidate_all();
 
     return 0;
 }

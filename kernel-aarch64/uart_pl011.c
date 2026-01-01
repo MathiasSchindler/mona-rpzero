@@ -1,5 +1,7 @@
 #include "uart_pl011.h"
 
+#include "klog.h"
+
 #define UART_DR   0x00u
 #define UART_FR   0x18u
 #define UART_IBRD 0x24u
@@ -53,6 +55,10 @@ void uart_putc(char c) {
     if (c == '\n') {
         uart_putc_hw('\r');
         uart_putc_hw('\n');
+
+        /* Store a single '\n' in the kernel log (avoid CRLF duplication). */
+        klog_putc('\n');
+
         if (g_uart_mirror_putc) {
             g_uart_mirror_putc('\n');
         }
@@ -60,6 +66,9 @@ void uart_putc(char c) {
     }
 
     uart_putc_hw(c);
+
+    klog_putc(c);
+
     if (g_uart_mirror_putc) {
         g_uart_mirror_putc(c);
     }

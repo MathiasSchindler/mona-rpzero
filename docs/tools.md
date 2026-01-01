@@ -21,7 +21,7 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 
 | Tool | Status | Flags/Features (#) |
 |---|---:|---:|
-| dmesg | Planned | 0 |
+| dmesg | Done | 3 |
 | kinit | Done | 1 |
 | pstree | Partial | 2 |
 | time | Partial | 2 |

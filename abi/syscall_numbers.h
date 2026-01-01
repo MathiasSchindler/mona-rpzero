@@ -49,3 +49,9 @@
 #define __NR_wait4         260ull
 #define __NR_prlimit64     261ull
 #define __NR_getrandom     278ull
+
+/*
+ * mona-specific syscalls (non-Linux).
+ * Keep these well above the Linux AArch64 range we currently use.
+ */
+#define __NR_mona_dmesg    4096ull

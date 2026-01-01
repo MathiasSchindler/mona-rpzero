@@ -35,6 +35,7 @@ OBJS := \
 	$(BUILD)/arch/enter_el0.o \
 	$(BUILD)/main.o \
 	$(BUILD)/exceptions.o \
+	$(BUILD)/klog.o \
 	$(BUILD)/console_in.o \
 	$(BUILD)/usb_kbd.o \
 	$(BUILD)/time.o \
@@ -44,6 +45,7 @@ OBJS := \
 	$(BUILD)/termfb.o \
 	$(BUILD)/sys_util.o \
 	$(BUILD)/sys_misc.o \
+	$(BUILD)/sys_dmesg.o \
 	$(BUILD)/sys_fs.o \
 	$(BUILD)/sys_proc.o \
 	$(BUILD)/proc.o \
@@ -97,6 +99,9 @@ $(BUILD)/main.o: main.c include/uart_pl011.h $(CONFIG_STAMP) | $(BUILD)
 $(BUILD)/console_in.o: console_in.c include/console_in.h include/uart_pl011.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(BUILD)/klog.o: klog.c include/klog.h include/stdint.h $(CONFIG_STAMP) | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
 $(BUILD)/usb_kbd.o: usb_kbd.c include/usb_kbd.h include/console_in.h include/time.h include/uart_pl011.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -145,6 +150,9 @@ $(BUILD)/sys_util.o: sys_util.c include/sys_util.h include/proc.h include/mmu.h 
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/sys_misc.o: sys_misc.c include/syscalls.h include/sys_util.h include/errno.h include/linux_abi.h include/power.h include/proc.h $(CONFIG_STAMP) | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/sys_dmesg.o: sys_dmesg.c include/syscalls.h include/sys_util.h include/errno.h include/klog.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/sys_fs.o: sys_fs.c include/syscalls.h include/sys_util.h include/errno.h include/linux_abi.h include/fd.h include/pipe.h include/vfs.h include/initramfs.h include/proc.h include/uart_pl011.h include/console_in.h $(CONFIG_STAMP) | $(BUILD)

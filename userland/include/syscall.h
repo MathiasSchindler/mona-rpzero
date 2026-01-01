@@ -255,6 +255,11 @@ static inline uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len) {
     return __syscall3_p(__NR_write, fd, (void *)buf, len);
 }
 
+/* mona-specific: read kernel log ring buffer. */
+static inline uint64_t sys_mona_dmesg(void *buf, uint64_t len, uint64_t flags) {
+    return __syscall3(__NR_mona_dmesg, (uint64_t)(uintptr_t)buf, len, flags);
+}
+
 __attribute__((noreturn)) static inline void sys_exit_group(uint64_t status) {
     (void)__syscall1(__NR_exit_group, status);
     for (;;) { }
