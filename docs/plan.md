@@ -158,7 +158,7 @@ Acceptance:
 
 Notes:
 
-- Implemented in `kernel-aarch64/` and validated via `make run-aarch64`.
+- Implemented in `kernel-aarch64/` and validated via `make run`.
 - DTB parsing prints `/model` and first RAM range from `/memory*/reg`.
 
 ### Phase 1 — Exceptions + EL normalization

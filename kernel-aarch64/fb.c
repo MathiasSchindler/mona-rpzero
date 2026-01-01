@@ -32,6 +32,9 @@ int fb_set_virtual_offset(uint32_t x_off, uint32_t y_off) {
     if (g_fb.virt_width == 0 || g_fb.virt_height == 0) return -1;
     if (x_off >= g_fb.virt_width) return -1;
     if (y_off >= g_fb.virt_height) return -1;
+    /* Viewport origin must fit fully within the virtual framebuffer. */
+    if (g_fb.width != 0 && x_off > (g_fb.virt_width - g_fb.width)) return -1;
+    if (g_fb.height != 0 && y_off > (g_fb.virt_height - g_fb.height)) return -1;
 
     static uint32_t msg[16] __attribute__((aligned(16)));
     uint32_t i = 2;

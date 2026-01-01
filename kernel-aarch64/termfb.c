@@ -224,20 +224,56 @@ static void termfb_clear_phys_rows(uint32_t phys_y_start, uint32_t rows) {
     }
 }
 
+static void termfb_copy_viewport_to_phys0(void) {
+    if (!g_info || !g_info->virt) return;
+    if (g_info->bpp != 32) return;
+
+    uint32_t words_per_row = g_info->pitch / 4u;
+    for (uint32_t y = 0; y < g_info->height; y++) {
+        volatile uint32_t *dst = termfb_row_ptr_phys(y);
+        volatile uint32_t *src = termfb_row_ptr_view(y);
+        for (uint32_t x = 0; x < words_per_row; x++) {
+            dst[x] = src[x];
+        }
+    }
+}
+
 static void termfb_scroll_one(void) {
     if (!g_info || !g_info->virt) return;
     if (g_info->bpp != 32) return;
 
     /* Prefer hardware scrolling via virtual offset to avoid large memcpy on device memory. */
-    if (g_info->virt_height > g_info->height && (g_info->height % TERMFB_FONT_H) == 0) {
+    if (g_info->virt_height > g_info->height &&
+        (g_info->height % TERMFB_FONT_H) == 0 &&
+        (g_info->virt_height % TERMFB_FONT_H) == 0) {
         uint32_t total_h = g_info->virt_height;
-        uint32_t new_off = (g_info->y_offset + TERMFB_FONT_H) % total_h;
+        uint32_t max_off = total_h - g_info->height;
 
-        if (fb_set_virtual_offset(0, new_off) == 0) {
-            /* Clear the newly exposed bottom character row. */
-            uint32_t bottom_phys = (new_off + g_info->height - TERMFB_FONT_H) % total_h;
-            termfb_clear_phys_rows(bottom_phys, TERMFB_FONT_H);
-            return;
+        if (g_info->y_offset + TERMFB_FONT_H <= max_off) {
+            uint32_t new_off = g_info->y_offset + TERMFB_FONT_H;
+            if (fb_set_virtual_offset(0, new_off) == 0) {
+                /* Clear the newly exposed bottom character row. */
+                uint32_t bottom_phys = new_off + g_info->height - TERMFB_FONT_H;
+                termfb_clear_phys_rows(bottom_phys, TERMFB_FONT_H);
+                return;
+            }
+        } else {
+            /*
+             * The mailbox interface clamps y_offset to <= virt_height - height.
+             * If we keep incrementing past that, scrolling stalls and output appears to "stop".
+             * Reset: copy current viewport back to y=0 and restart near the top.
+             */
+            termfb_copy_viewport_to_phys0();
+            (void)fb_set_virtual_offset(0, 0);
+
+            if (TERMFB_FONT_H <= max_off) {
+                uint32_t new_off = TERMFB_FONT_H;
+                if (fb_set_virtual_offset(0, new_off) == 0) {
+                    uint32_t bottom_phys = new_off + g_info->height - TERMFB_FONT_H;
+                    termfb_clear_phys_rows(bottom_phys, TERMFB_FONT_H);
+                    return;
+                }
+            }
         }
     }
 

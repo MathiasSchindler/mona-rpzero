@@ -17,21 +17,26 @@ Constraints (project style):
 - Kernel UART output remains the canonical console and is mirrored to the framebuffer in gfx mode.
 
 - Scrolling is fast in gfx mode: uses a larger virtual framebuffer + “virtual offset” hardware scrolling (no giant memcpy of device memory).
-- `make run-gfx-kbd-debug`: Same as above, but with `--serial stdio` so you can see USB debug logs in your terminal while iterating on enumeration.
+- `make run`: Starts QEMU with the framebuffer enabled and a USB keyboard attached by default. UART logs go to your host terminal (`SERIAL=stdio`).
+
+  If you want extra USB debug logs from the kernel while iterating on enumeration:
+  `make run USB_KBD_DEBUG=1`
 
   - `Ctrl+Option+1`: framebuffer view
   - `Ctrl+Option+2`: UART console (where `/bin/sh` runs)
-- Experimental: `make run-gfx-kbd` tries to use a USB HID keyboard device in QEMU (not via UART).
-  This is an early WIP and may depend on QEMU/device quirks.
+  Notes:
+  - The default `make run` disables QEMU's `usb-net` device (`USB_NET=0`) so the hub's first downstream device is the keyboard (simplifies enumeration).
 
 ### How to run
-- `make run-gfx` (framebuffer window + UART on host terminal)
-- `make run-gfx-vc` (framebuffer window + UART inside the QEMU window; host terminal stays mostly quiet)
-- `make run-gfx-kbd` (adds a QEMU `usb-kbd` device and disables the UART backend; intended to validate non-UART input, still WIP)
-- Note: the keyboard run modes disable QEMU's `usb-net` device so the hub's first downstream device is the keyboard (simplifies enumeration).
+- `make run` (framebuffer window + USB keyboard + UART logs on host terminal)
+
+Useful variants:
+- In-window UART console: `make run SERIAL=vc`
+- Validate non-UART input only: `make run SERIAL=null`
+- Headless-ish (no display window): `make run GFX=0 USB_KBD=0`
 
 ### Known limitations / not implemented yet
-- True “type directly into the framebuffer terminal” input (i.e. not via UART) is WORK IN PROGRESS.
+- True “type directly into the framebuffer terminal” input (i.e. not via UART) is DONE in QEMU via the USB keyboard path.
 - Real-hardware (Pi Zero 2 W) validation is not done yet; some mailbox address and bus/phys translation details may still need hardening.
 
 ---
@@ -221,15 +226,15 @@ Full terminal UX needs input beyond UART.
 Short-term options:
 - Keep input over UART (no keyboard).
 - In QEMU, you can at least avoid the separate host terminal by running the UART on a QEMU
-  “virtual console” (in-window serial): `make run-gfx-vc`.
+  “virtual console” (in-window serial): `make run SERIAL=vc`.
   - This makes the host terminal mostly quiet (UART is no longer `-serial stdio`).
   - The QEMU monitor is disabled by default for this mode so the console switch keys land on
     the UART.
 - In QEMU, consider a simple emulated HID path if available on raspi3b machine.
 
 **Status**:
-- DONE: QEMU in-window UART console workflow (`make run-gfx-vc`) for convenient input.
-- WORK IN PROGRESS: keyboard input directly into framebuffer terminal without UART.
+- DONE: QEMU in-window UART console workflow (`make run SERIAL=vc`) for convenient input.
+- DONE: keyboard input directly into framebuffer terminal without UART (QEMU USB HID keyboard).
 
 Long-term (hardware):
 - USB host stack + HID keyboard is a large project; defer unless you want a full local console.
@@ -250,7 +255,7 @@ Ensure your QEMU run path enables a display:
       QEMU GUI (often Ctrl-Alt-2; on macOS this may be Ctrl-Option-2)
 
 **Status**:
-- DONE: `make run-gfx` and `make run-gfx-vc` exist and keep `make test` headless-friendly.
+- DONE: `make run` is the primary interactive target and `make test` stays headless-friendly.
 
 Add a small doc snippet to the script/comments:
 - “Framebuffer output appears in QEMU window; UART still on stdio.”

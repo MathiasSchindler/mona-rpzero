@@ -1,10 +1,21 @@
 # Minimal workflow (bare-metal kernel + userland) for QEMU raspi3b (Pi Zero 2 W-ish)
 #
 # Targets:
-#   make clean  - remove all build artifacts
-#   make        - build bare-metal kernel + userland
-#   make run    - boot bare-metal kernel in QEMU
+#   make (all)  - build bare-metal kernel + userland
+#   make run    - boot interactive QEMU (default: framebuffer + USB keyboard + UART logs on stdio)
 #   make test   - boot bare-metal kernel in QEMU, run selftests, exit
+#   make clean  - remove all build artifacts
+#
+# `make run` can be customized via variables:
+#   GFX=0|1            (default: 1)
+#   USB_KBD=0|1        (default: 1)
+#   USB_NET=0|1        (default: 0)  # when USB_KBD=1 we default this off for deterministic enum
+#   SERIAL=stdio|vc|null  (default: stdio)
+#   MONITOR=none|stdio|vc (default: none)
+#   USB_KBD_DEBUG=0|1  (default: 0)  # enables extra kernel USB debug logs
+#
+# Example:
+#   make run SERIAL=vc
 
 SHELL := /usr/bin/env bash
 
@@ -28,6 +39,9 @@ MEM ?= 1024
 FB_W ?= 1920
 FB_H ?= 1080
 FB_BPP ?= 32
+# Virtual framebuffer height multiplier (reduces wrap/reset frequency in termfb scrolling).
+# Larger values use more RAM but make long outputs smoother.
+FB_VIRT_MULT ?= 4
 
 # QEMU display backend for graphics runs (macOS default: cocoa).
 QEMU_DISPLAY ?= cocoa
@@ -36,8 +50,17 @@ QEMU_DISPLAY ?= cocoa
 USERPROG ?= init
 
 
-.PHONY: all run run-gfx run-gfx-vc run-gfx-kbd run-gfx-kbd-debug test clean
-.PHONY: aarch64-kernel run-aarch64 test-aarch64 userland
+# --- `make run` defaults (interactive) ---
+GFX ?= 1
+USB_KBD ?= 1
+USB_NET ?= 0
+SERIAL ?= stdio
+MONITOR ?= none
+USB_KBD_DEBUG ?= 0
+
+
+.PHONY: all run test clean help
+.PHONY: aarch64-kernel test-aarch64 userland
 
 all: aarch64-kernel
 
@@ -59,62 +82,31 @@ userland:
 aarch64-kernel: userland
 	@$(MAKE) -C "$(AARCH64_DIR)" CROSS="$(AARCH64_CROSS)" USERPROG="$(USERPROG)" all
 
-run-aarch64: userland
-	@echo "Starting QEMU (raspi3b) with bare-metal kernel"
+run: userland
+	@echo "Starting QEMU (raspi3b) interactive run"
+	@echo "  GFX=$(GFX) USB_KBD=$(USB_KBD) USB_NET=$(USB_NET) SERIAL=$(SERIAL) MONITOR=$(MONITOR)"
 	@if [[ -z "$(DTB)" ]]; then \
 		echo "No DTB found. Put one into out/ or archive/, or pass DTB=..." >&2; \
 		echo "Tried: $(DTB_CANDIDATES)" >&2; \
 		exit 2; \
 	fi
-	@# Enable semihosting-powered `poweroff` for QEMU runs.
-	@$(MAKE) -C "$(AARCH64_DIR)" CROSS="$(AARCH64_CROSS)" USERPROG="$(USERPROG)" KERNEL_DEFS="-DQEMU_SEMIHOSTING" all
-	@set +e; bash tools/run-qemu-raspi3b.sh --kernel "$(AARCH64_IMG)" --dtb "$(DTB)" --mem "$(MEM)"; rc=$$?; if [[ $$rc -eq 0 || $$rc -eq 128 ]]; then exit 0; fi; exit $$rc
-
-run: run-aarch64
-
-run-gfx: userland
-	@echo "Starting QEMU (raspi3b) with graphics + framebuffer"
-	@if [[ -z "$(DTB)" ]]; then \
-		echo "No DTB found. Put one into out/ or archive/, or pass DTB=..." >&2; \
-		echo "Tried: $(DTB_CANDIDATES)" >&2; \
-		exit 2; \
-	fi
-	@$(MAKE) -C "$(AARCH64_DIR)" CROSS="$(AARCH64_CROSS)" USERPROG="$(USERPROG)" \
-		KERNEL_DEFS="-DQEMU_SEMIHOSTING -DENABLE_FB -DFB_REQ_W=$(FB_W) -DFB_REQ_H=$(FB_H) -DFB_REQ_BPP=$(FB_BPP)" all
-	@set +e; bash tools/run-qemu-raspi3b.sh --gfx --display "$(QEMU_DISPLAY)" --kernel "$(AARCH64_IMG)" --dtb "$(DTB)" --mem "$(MEM)"; rc=$$?; if [[ $$rc -eq 0 || $$rc -eq 128 ]]; then exit 0; fi; exit $$rc
-
-run-gfx-vc: userland
-	@echo "Starting QEMU (raspi3b) with graphics + framebuffer (serial=vc)"
-	@if [[ -z "$(DTB)" ]]; then \
-		echo "No DTB found. Put one into out/ or archive/, or pass DTB=..." >&2; \
-		echo "Tried: $(DTB_CANDIDATES)" >&2; \
-		exit 2; \
-	fi
-	@$(MAKE) -C "$(AARCH64_DIR)" CROSS="$(AARCH64_CROSS)" USERPROG="$(USERPROG)" \
-		KERNEL_DEFS="-DQEMU_SEMIHOSTING -DENABLE_FB -DFB_REQ_W=$(FB_W) -DFB_REQ_H=$(FB_H) -DFB_REQ_BPP=$(FB_BPP)" all
-	@set +e; bash tools/run-qemu-raspi3b.sh --gfx --serial vc --monitor none --display "$(QEMU_DISPLAY)" --kernel "$(AARCH64_IMG)" --dtb "$(DTB)" --mem "$(MEM)"; rc=$$?; if [[ $$rc -eq 0 || $$rc -eq 128 ]]; then exit 0; fi; exit $$rc
-
-run-gfx-kbd: userland
-	@echo "Starting QEMU (raspi3b) with graphics + framebuffer + usb-kbd (WIP)"
-	@if [[ -z "$(DTB)" ]]; then \
-		echo "No DTB found. Put one into out/ or archive/, or pass DTB=..." >&2; \
-		echo "Tried: $(DTB_CANDIDATES)" >&2; \
-		exit 2; \
-	fi
-	@$(MAKE) -C "$(AARCH64_DIR)" CROSS="$(AARCH64_CROSS)" USERPROG="$(USERPROG)" \
-		KERNEL_DEFS="-DQEMU_SEMIHOSTING -DENABLE_FB -DENABLE_USB_KBD -DFB_REQ_W=$(FB_W) -DFB_REQ_H=$(FB_H) -DFB_REQ_BPP=$(FB_BPP)" all
-	@set +e; bash tools/run-qemu-raspi3b.sh --gfx --usb-kbd --no-usb-net --serial null --monitor none --display "$(QEMU_DISPLAY)" --kernel "$(AARCH64_IMG)" --dtb "$(DTB)" --mem "$(MEM)"; rc=$$?; if [[ $$rc -eq 0 || $$rc -eq 128 ]]; then exit 0; fi; exit $$rc
-
-run-gfx-kbd-debug: userland
-	@echo "Starting QEMU (raspi3b) with graphics + framebuffer + usb-kbd (DEBUG serial=stdio)"
-	@if [[ -z "$(DTB)" ]]; then \
-		echo "No DTB found. Put one into out/ or archive/, or pass DTB=..." >&2; \
-		echo "Tried: $(DTB_CANDIDATES)" >&2; \
-		exit 2; \
-	fi
-	@$(MAKE) -C "$(AARCH64_DIR)" CROSS="$(AARCH64_CROSS)" USERPROG="$(USERPROG)" \
-		KERNEL_DEFS="-DQEMU_SEMIHOSTING -DENABLE_FB -DENABLE_USB_KBD -DENABLE_USB_KBD_DEBUG -DFB_REQ_W=$(FB_W) -DFB_REQ_H=$(FB_H) -DFB_REQ_BPP=$(FB_BPP)" all
-	@set +e; bash tools/run-qemu-raspi3b.sh --gfx --usb-kbd --no-usb-net --serial stdio --monitor none --display "$(QEMU_DISPLAY)" --kernel "$(AARCH64_IMG)" --dtb "$(DTB)" --mem "$(MEM)"; rc=$$?; if [[ $$rc -eq 0 || $$rc -eq 128 ]]; then exit 0; fi; exit $$rc
+	@kdefs="-DQEMU_SEMIHOSTING"; \
+	if [[ "$(GFX)" == "1" ]]; then \
+		virt_h=$$(( $(FB_H) * $(FB_VIRT_MULT) )); \
+		kdefs+=" -DENABLE_FB -DFB_REQ_W=$(FB_W) -DFB_REQ_H=$(FB_H) -DFB_REQ_VIRT_H=$$virt_h -DFB_REQ_BPP=$(FB_BPP)"; \
+	fi; \
+	if [[ "$(USB_KBD)" == "1" ]]; then \
+		kdefs+=" -DENABLE_USB_KBD"; \
+		if [[ "$(USB_KBD_DEBUG)" == "1" ]]; then kdefs+=" -DENABLE_USB_KBD_DEBUG"; fi; \
+	fi; \
+	$(MAKE) -C "$(AARCH64_DIR)" CROSS="$(AARCH64_CROSS)" USERPROG="$(USERPROG)" KERNEL_DEFS="$$kdefs" all
+	@args=( --kernel "$(AARCH64_IMG)" --dtb "$(DTB)" --mem "$(MEM)" ); \
+	if [[ "$(GFX)" == "1" ]]; then \
+		args+=( --gfx --display "$(QEMU_DISPLAY)" --serial "$(SERIAL)" --monitor "$(MONITOR)" ); \
+	fi; \
+	if [[ "$(USB_NET)" == "0" ]]; then args+=( --no-usb-net ); fi; \
+	if [[ "$(USB_KBD)" == "1" ]]; then args+=( --usb-kbd ); fi; \
+	set +e; bash tools/run-qemu-raspi3b.sh "$${args[@]}"; rc=$$?; if [[ $$rc -eq 0 || $$rc -eq 128 ]]; then exit 0; fi; exit $$rc
 
 test:
 	@$(MAKE) USERPROG=kinit test-aarch64
@@ -132,3 +124,20 @@ test-aarch64: userland
 
 clean:
 	@rm -rf "$(AARCH64_DIR)/build" "$(USERLAND_DIR)/build"
+
+help:
+	@echo "Targets:"; \
+	echo "  make (all)       Build kernel + userland"; \
+	echo "  make run         Interactive QEMU run (default: framebuffer+usb-kbd+stdio)"; \
+	echo "  make test        QEMU selftests (headless)"; \
+	echo "  make clean       Remove build artifacts"; \
+	echo ""; \
+	echo "Run variables (defaults shown):"; \
+	echo "  GFX=$(GFX) USB_KBD=$(USB_KBD) USB_NET=$(USB_NET) SERIAL=$(SERIAL) MONITOR=$(MONITOR) USB_KBD_DEBUG=$(USB_KBD_DEBUG)"; \
+	echo "  FB_W=$(FB_W) FB_H=$(FB_H) FB_BPP=$(FB_BPP) FB_VIRT_MULT=$(FB_VIRT_MULT)"; \
+	echo ""; \
+	echo "Examples:"; \
+	echo "  make run SERIAL=vc"; \
+	echo "  make run GFX=0 USB_KBD=0"; \
+	echo "  make run USB_KBD_DEBUG=1"; \
+	echo "  make run FB_VIRT_MULT=8"
