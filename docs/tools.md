@@ -62,7 +62,7 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | sh | Partial | 4 |
 | watch | Planned | 0 |
 | clear | Planned | 0 |
-| mv | Planned | 0 |
+| mv | Partial | 3 |
 | sha256 | Planned | 0 |
 | wc | Partial | 4 |
 | cmp | Planned | 0 |
@@ -77,7 +77,7 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | gzip | Planned | 0 |
 | sort | Partial | 4 |
 | who | Planned | 0 |
-| cp | Planned | 0 |
+| cp | Partial | 4 |
 | head | Partial | 4 |
 | stat | Planned | 0 |
 | whoami | Planned | 0 |
@@ -85,8 +85,8 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | hexdump | Planned | 0 |
 | objdump | Planned | 0 |
 | strings | Planned | 0 |
-| cut | Planned | 0 |
-| od | Planned | 0 |
+| cut | Partial | 5 |
+| od | Partial | 7 |
 | tail | Partial | 4 |
 | date | Done | 1 |
 | hostname | Planned | 0 |
@@ -96,11 +96,11 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | df | Planned | 0 |
 | id | Planned | 0 |
 | xxd | Planned | 0 |
-| diff | Planned | 0 |
+| diff | Partial | 5 |
 | init | Partial | 1 |
 | printf | Partial | 4 |
 | tee | Partial | 3 |
-| yes | Planned | 0 |
+| yes | Done | 1 |
 | kill | Done | 3 |
 | ps | Done | 2 |
 | test | Planned | 0 |

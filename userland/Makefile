@@ -43,9 +43,10 @@ USER_BASE ?= 0x0000000000400000
 
 
 
+
 .PHONY: all clean check-toolchain check-nolibc initramfs
 
-all: check-nolibc $(BUILD)/echo.bin $(BUILD)/true.bin $(BUILD)/false.bin $(BUILD)/cat.bin $(BUILD)/ls.bin $(BUILD)/pwd.bin $(BUILD)/pid.bin $(BUILD)/uname.bin $(BUILD)/mkdir.bin $(BUILD)/touch.bin $(BUILD)/rm.bin $(BUILD)/rmdir.bin $(BUILD)/seq.bin $(BUILD)/uniq.bin $(BUILD)/wc.bin $(BUILD)/grep.bin $(BUILD)/ps.bin $(BUILD)/kill.bin $(BUILD)/pstree.bin $(BUILD)/find.bin $(BUILD)/awk.bin $(BUILD)/basename.bin $(BUILD)/du.bin $(BUILD)/ln.bin $(BUILD)/tr.bin $(BUILD)/sed.bin $(BUILD)/head.bin $(BUILD)/tail.bin $(BUILD)/sort.bin $(BUILD)/printf.bin $(BUILD)/tee.bin $(BUILD)/rev.bin $(BUILD)/env.bin $(BUILD)/dirname.bin $(BUILD)/time.bin $(BUILD)/dmesg.bin $(BUILD)/readelf.bin $(BUILD)/readlink.bin $(BUILD)/brk.bin $(BUILD)/mmap.bin $(BUILD)/cwd.bin $(BUILD)/tty.bin $(BUILD)/sleep.bin $(BUILD)/date.bin $(BUILD)/uptime.bin $(BUILD)/compat.bin $(BUILD)/kinit.bin $(BUILD)/sh.bin $(BUILD)/init.bin
+all: check-nolibc $(BUILD)/echo.bin $(BUILD)/true.bin $(BUILD)/false.bin $(BUILD)/cat.bin $(BUILD)/ls.bin $(BUILD)/pwd.bin $(BUILD)/pid.bin $(BUILD)/uname.bin $(BUILD)/mkdir.bin $(BUILD)/touch.bin $(BUILD)/rm.bin $(BUILD)/rmdir.bin $(BUILD)/seq.bin $(BUILD)/uniq.bin $(BUILD)/wc.bin $(BUILD)/grep.bin $(BUILD)/ps.bin $(BUILD)/kill.bin $(BUILD)/pstree.bin $(BUILD)/find.bin $(BUILD)/awk.bin $(BUILD)/basename.bin $(BUILD)/du.bin $(BUILD)/ln.bin $(BUILD)/tr.bin $(BUILD)/sed.bin $(BUILD)/cut.bin $(BUILD)/od.bin $(BUILD)/head.bin $(BUILD)/tail.bin $(BUILD)/sort.bin $(BUILD)/printf.bin $(BUILD)/tee.bin $(BUILD)/rev.bin $(BUILD)/env.bin $(BUILD)/dirname.bin $(BUILD)/time.bin $(BUILD)/dmesg.bin $(BUILD)/readelf.bin $(BUILD)/readlink.bin $(BUILD)/brk.bin $(BUILD)/mmap.bin $(BUILD)/cwd.bin $(BUILD)/tty.bin $(BUILD)/sleep.bin $(BUILD)/date.bin $(BUILD)/uptime.bin $(BUILD)/compat.bin $(BUILD)/kinit.bin $(BUILD)/sh.bin $(BUILD)/init.bin $(BUILD)/yes.bin $(BUILD)/diff.bin $(BUILD)/cp.bin $(BUILD)/mv.bin
 
 initramfs: $(BUILD)/initramfs.cpio
 
@@ -147,6 +148,12 @@ $(BUILD)/tr.o: src/tr.c include/syscall.h | $(BUILD)
 $(BUILD)/sed.o: src/sed.c include/syscall.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(BUILD)/cut.o: src/cut.c include/syscall.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/od.o: src/od.c include/syscall.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
 $(BUILD)/head.o: src/head.c include/syscall.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -169,6 +176,18 @@ $(BUILD)/env.o: src/env.c include/syscall.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/dirname.o: src/dirname.c include/syscall.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/yes.o: src/yes.c include/syscall.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/diff.o: src/diff.c include/syscall.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/cp.o: src/cp.c include/syscall.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/mv.o: src/mv.c include/syscall.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/time.o: src/time.c include/syscall.h | $(BUILD)
@@ -316,6 +335,14 @@ $(BUILD)/sed.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BU
 	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
 	$(POSTLINK)
 
+$(BUILD)/cut.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/cut.o | check-toolchain
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
+
+$(BUILD)/od.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/od.o | check-toolchain
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
+
 $(BUILD)/head.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/head.o | check-toolchain
 	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
 	$(POSTLINK)
@@ -345,6 +372,22 @@ $(BUILD)/env.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BU
 	$(POSTLINK)
 
 $(BUILD)/dirname.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/dirname.o | check-toolchain
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
+
+$(BUILD)/yes.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/yes.o | check-toolchain
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
+
+$(BUILD)/diff.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/diff.o | check-toolchain
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
+
+$(BUILD)/cp.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/cp.o | check-toolchain
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
+
+$(BUILD)/mv.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/mv.o | check-toolchain
 	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
 	$(POSTLINK)
 
@@ -490,6 +533,12 @@ $(BUILD)/tr.bin: $(BUILD)/tr.elf | check-toolchain
 $(BUILD)/sed.bin: $(BUILD)/sed.elf | check-toolchain
 	$(OBJCOPY) -O binary $< $@
 
+$(BUILD)/cut.bin: $(BUILD)/cut.elf | check-toolchain
+	$(OBJCOPY) -O binary $< $@
+
+$(BUILD)/od.bin: $(BUILD)/od.elf | check-toolchain
+	$(OBJCOPY) -O binary $< $@
+
 $(BUILD)/head.bin: $(BUILD)/head.elf | check-toolchain
 	$(OBJCOPY) -O binary $< $@
 
@@ -512,6 +561,18 @@ $(BUILD)/env.bin: $(BUILD)/env.elf | check-toolchain
 	$(OBJCOPY) -O binary $< $@
 
 $(BUILD)/dirname.bin: $(BUILD)/dirname.elf | check-toolchain
+	$(OBJCOPY) -O binary $< $@
+
+$(BUILD)/yes.bin: $(BUILD)/yes.elf | check-toolchain
+	$(OBJCOPY) -O binary $< $@
+
+$(BUILD)/diff.bin: $(BUILD)/diff.elf | check-toolchain
+	$(OBJCOPY) -O binary $< $@
+
+$(BUILD)/cp.bin: $(BUILD)/cp.elf | check-toolchain
+	$(OBJCOPY) -O binary $< $@
+
+$(BUILD)/mv.bin: $(BUILD)/mv.elf | check-toolchain
 	$(OBJCOPY) -O binary $< $@
 
 $(BUILD)/time.bin: $(BUILD)/time.elf | check-toolchain
@@ -599,6 +660,8 @@ $(BUILD)/initramfs.cpio: $(TOOLS_DIR)/mkcpio_newc.py all | $(BUILD)
 	@cp "$(BUILD)/ln.elf"  "$(INITRAMFS_ROOT)/bin/ln"
 	@cp "$(BUILD)/tr.elf"  "$(INITRAMFS_ROOT)/bin/tr"
 	@cp "$(BUILD)/sed.elf"  "$(INITRAMFS_ROOT)/bin/sed"
+	@cp "$(BUILD)/cut.elf"  "$(INITRAMFS_ROOT)/bin/cut"
+	@cp "$(BUILD)/od.elf"  "$(INITRAMFS_ROOT)/bin/od"
 	@cp "$(BUILD)/head.elf"  "$(INITRAMFS_ROOT)/bin/head"
 	@cp "$(BUILD)/tail.elf"  "$(INITRAMFS_ROOT)/bin/tail"
 	@cp "$(BUILD)/sort.elf"  "$(INITRAMFS_ROOT)/bin/sort"
@@ -607,6 +670,10 @@ $(BUILD)/initramfs.cpio: $(TOOLS_DIR)/mkcpio_newc.py all | $(BUILD)
 	@cp "$(BUILD)/rev.elf"  "$(INITRAMFS_ROOT)/bin/rev"
 	@cp "$(BUILD)/env.elf"  "$(INITRAMFS_ROOT)/bin/env"
 	@cp "$(BUILD)/dirname.elf"  "$(INITRAMFS_ROOT)/bin/dirname"
+	@cp "$(BUILD)/yes.elf" "$(INITRAMFS_ROOT)/bin/yes"
+	@cp "$(BUILD)/diff.elf" "$(INITRAMFS_ROOT)/bin/diff"
+	@cp "$(BUILD)/cp.elf" "$(INITRAMFS_ROOT)/bin/cp"
+	@cp "$(BUILD)/mv.elf" "$(INITRAMFS_ROOT)/bin/mv"
 	@cp "$(BUILD)/time.elf"  "$(INITRAMFS_ROOT)/bin/time"
 	@cp "$(BUILD)/dmesg.elf"  "$(INITRAMFS_ROOT)/bin/dmesg"
 	@cp "$(BUILD)/readelf.elf"  "$(INITRAMFS_ROOT)/bin/readelf"

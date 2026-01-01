@@ -237,6 +237,59 @@ int main(int argc, char **argv, char **envp) {
         }
     }
 
+    /* Tool smoke test: diff -s (identical files). */
+    {
+        char out[256];
+        const char *const diff_argv[] = {"diff", "-s", "/hello.txt", "/hello.txt", 0};
+        if (run_capture("/bin/diff", diff_argv, out, sizeof(out)) != 0) {
+            sys_puts("[kinit] diff capture failed\n");
+            failed |= 1;
+        } else if (!mem_contains(out, cstr_len_u64_local(out), "are identical")) {
+            sys_puts("[kinit] diff -s output unexpected\n");
+            failed |= 1;
+        }
+    }
+
+    /* Tool smoke test: cut field selection via pipeline. */
+    {
+        char out[128];
+        const char *const cut_argv[] = {"sh", "-c", "/bin/printf \"a:b:c\\n\" | /bin/cut -d : -f 2", 0};
+        if (run_capture("/bin/sh", cut_argv, out, sizeof(out)) != 0) {
+            sys_puts("[kinit] cut capture failed\n");
+            failed |= 1;
+        } else if (!mem_contains(out, cstr_len_u64_local(out), "b\n")) {
+            sys_puts("[kinit] cut output unexpected\n");
+            failed |= 1;
+        }
+    }
+
+    /* Tool smoke test: od hex bytes via pipeline. */
+    {
+        char out[128];
+        const char *const od_argv[] = {"sh", "-c", "/bin/printf \"AB\" | /bin/od -A n -t x1", 0};
+        if (run_capture("/bin/sh", od_argv, out, sizeof(out)) != 0) {
+            sys_puts("[kinit] od capture failed\n");
+            failed |= 1;
+        } else if (!mem_contains(out, cstr_len_u64_local(out), "41 42")) {
+            sys_puts("[kinit] od output unexpected\n");
+            failed |= 1;
+        }
+    }
+
+    /* Tool smoke test: od -C canonical output includes ASCII bar. */
+    {
+        char out[256];
+        const char *const od_argv[] = {"sh", "-c", "/bin/printf \"AB\" | /bin/od -C", 0};
+        if (run_capture("/bin/sh", od_argv, out, sizeof(out)) != 0) {
+            sys_puts("[kinit] od -C capture failed\n");
+            failed |= 1;
+        } else if (!mem_contains(out, cstr_len_u64_local(out), "41 42") ||
+                   !mem_contains(out, cstr_len_u64_local(out), "|AB")) {
+            sys_puts("[kinit] od -C output unexpected\n");
+            failed |= 1;
+        }
+    }
+
     /* Phase-8 smoke test: process identity. */
     {
         const char *const test_argv[] = {"pid", 0};
@@ -484,6 +537,80 @@ int main(int argc, char **argv, char **envp) {
         }
 
         (void)sys_unlinkat((uint64_t)AT_FDCWD, "/tmp/sy", 0);
+    }
+
+    /* Tool smoke test: cp copies file contents; mv moves (copy+unlink) files. */
+    {
+        enum {
+            AT_FDCWD = -100,
+            O_WRONLY = 1,
+            O_CREAT = 0100,
+            O_TRUNC = 01000,
+            AT_REMOVEDIR = 0x200,
+        };
+
+        /* Best-effort cleanup from prior runs. */
+        (void)sys_unlinkat((uint64_t)AT_FDCWD, "/cptest/a", 0);
+        (void)sys_unlinkat((uint64_t)AT_FDCWD, "/cptest/b", 0);
+        (void)sys_unlinkat((uint64_t)AT_FDCWD, "/cptest/c", 0);
+        (void)sys_unlinkat((uint64_t)AT_FDCWD, "/cptest", (uint64_t)AT_REMOVEDIR);
+
+        (void)sys_mkdirat((uint64_t)AT_FDCWD, "/cptest", 0755);
+
+        uint64_t fd = sys_openat((uint64_t)AT_FDCWD, "/cptest/a", (uint64_t)(O_CREAT | O_WRONLY | O_TRUNC), 0644);
+        if ((int64_t)fd < 0) {
+            sys_puts("[kinit] cp/mv setup: openat failed rc=");
+            write_i64_dec_local((int64_t)fd);
+            sys_puts("\n");
+            failed |= 1;
+        } else {
+            (void)sys_write(fd, "hello\n", 6);
+            (void)sys_close(fd);
+
+            const char *const cp_argv[] = {"cp", "/cptest/a", "/cptest/b", 0};
+            failed |= run_test("/bin/cp /cptest/a /cptest/b", "/bin/cp", cp_argv);
+
+            {
+                char out[256];
+                const char *const diff_argv[] = {"diff", "-s", "/cptest/a", "/cptest/b", 0};
+                if (run_capture("/bin/diff", diff_argv, out, sizeof(out)) != 0) {
+                    sys_puts("[kinit] cp: diff capture failed\n");
+                    failed |= 1;
+                } else if (!mem_contains(out, cstr_len_u64_local(out), "are identical")) {
+                    sys_puts("[kinit] cp: diff -s output unexpected\n");
+                    failed |= 1;
+                }
+            }
+
+            const char *const mv_argv[] = {"mv", "/cptest/b", "/cptest/c", 0};
+            failed |= run_test("/bin/mv /cptest/b /cptest/c", "/bin/mv", mv_argv);
+
+            {
+                char out[256];
+                const char *const diff_argv[] = {"diff", "-s", "/cptest/a", "/cptest/c", 0};
+                if (run_capture("/bin/diff", diff_argv, out, sizeof(out)) != 0) {
+                    sys_puts("[kinit] mv: diff capture failed\n");
+                    failed |= 1;
+                } else if (!mem_contains(out, cstr_len_u64_local(out), "are identical")) {
+                    sys_puts("[kinit] mv: diff -s output unexpected\n");
+                    failed |= 1;
+                }
+            }
+
+            /* Verify source of mv is gone. */
+            {
+                linux_stat_t st;
+                int64_t s = (int64_t)sys_newfstatat((uint64_t)AT_FDCWD, "/cptest/b", &st, 0);
+                if (s >= 0) {
+                    sys_puts("[kinit] mv: source still exists\n");
+                    failed |= 1;
+                }
+            }
+
+            (void)sys_unlinkat((uint64_t)AT_FDCWD, "/cptest/a", 0);
+            (void)sys_unlinkat((uint64_t)AT_FDCWD, "/cptest/c", 0);
+            (void)sys_unlinkat((uint64_t)AT_FDCWD, "/cptest", (uint64_t)AT_REMOVEDIR);
+        }
     }
 
     /* Tool smoke test: time. */
