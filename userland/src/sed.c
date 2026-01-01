@@ -21,6 +21,29 @@ static uint64_t cstr_len_u64_local(const char *s) {
     return n;
 }
 
+static int strip_outer_quotes(const char *in, char *out, uint64_t cap) {
+    if (!in || !out || cap == 0) return -1;
+
+    uint64_t n = cstr_len_u64_local(in);
+    if (n + 1 > cap) return -1;
+
+    char q = 0;
+    if (n >= 2 && ((in[0] == '\'' && in[n - 1] == '\'') || (in[0] == '"' && in[n - 1] == '"'))) {
+        q = in[0];
+    }
+
+    uint64_t start = (q != 0) ? 1 : 0;
+    uint64_t end = (q != 0) ? (n - 1) : n;
+
+    uint64_t o = 0;
+    for (uint64_t i = start; i < end; i++) {
+        if (o + 1 >= cap) return -1;
+        out[o++] = in[i];
+    }
+    out[o] = '\0';
+    return 0;
+}
+
 static void usage(void) {
     sys_puts("usage: sed [-n] [-e SCRIPT]... [SCRIPT] [FILE...]\n");
     sys_puts("\n");
@@ -460,8 +483,14 @@ int main(int argc, char **argv, char **envp) {
     sed_cmd_t cmds[MAX_CMDS];
     uint64_t ncmds = 0;
     for (uint64_t si = 0; si < nscripts; si++) {
+        char script_buf[256];
+        if (strip_outer_quotes(scripts[si], script_buf, sizeof(script_buf)) != 0) {
+            sys_puts("sed: script too long\n");
+            return 2;
+        }
+
         uint64_t added = 0;
-        if (parse_script(scripts[si], cmds + ncmds, (uint64_t)MAX_CMDS - ncmds, &added) != 0) {
+        if (parse_script(script_buf, cmds + ncmds, (uint64_t)MAX_CMDS - ncmds, &added) != 0) {
             sys_puts("sed: invalid script: ");
             sys_puts(scripts[si]);
             sys_puts("\n");
