@@ -61,7 +61,7 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | mount | Planned | 0 |
 | sh | Partial | 4 |
 | watch | Planned | 0 |
-| clear | Planned | 0 |
+| clear | Partial | 1 |
 | mv | Partial | 3 |
 | sha256 | Planned | 0 |
 | wc | Partial | 4 |
