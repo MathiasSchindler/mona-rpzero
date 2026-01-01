@@ -56,9 +56,6 @@ void uart_putc(char c) {
         uart_putc_hw('\r');
         uart_putc_hw('\n');
 
-        /* Store a single '\n' in the kernel log (avoid CRLF duplication). */
-        klog_putc('\n');
-
         if (g_uart_mirror_putc) {
             g_uart_mirror_putc('\n');
         }
@@ -67,8 +64,6 @@ void uart_putc(char c) {
 
     uart_putc_hw(c);
 
-    klog_putc(c);
-
     if (g_uart_mirror_putc) {
         g_uart_mirror_putc(c);
     }
@@ -76,7 +71,14 @@ void uart_putc(char c) {
 
 void uart_write(const char *s) {
     while (*s) {
-        uart_putc(*s++);
+        char c = *s++;
+        if (c == '\n') {
+            /* Store a single '\n' in the kernel log (avoid CRLF duplication). */
+            klog_putc('\n');
+        } else {
+            klog_putc(c);
+        }
+        uart_putc(c);
     }
 }
 
@@ -84,7 +86,9 @@ void uart_write_hex_u64(uint64_t v) {
     static const char *hex = "0123456789abcdef";
     uart_write("0x");
     for (int i = 60; i >= 0; i -= 4) {
-        uart_putc(hex[(v >> (unsigned)i) & 0xFu]);
+        char c = hex[(v >> (unsigned)i) & 0xFu];
+        klog_putc(c);
+        uart_putc(c);
     }
 }
 
