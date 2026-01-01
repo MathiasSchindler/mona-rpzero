@@ -224,6 +224,10 @@ static inline uint64_t sys_newfstatat(uint64_t dirfd, const char *pathname, void
     return __syscall4_uppu(__NR_newfstatat, dirfd, pathname, statbuf, flags);
 }
 
+static inline uint64_t sys_fchmodat(int64_t dirfd, const char *pathname, uint64_t mode, uint64_t flags) {
+    return __syscall4_upuu(__NR_fchmodat, (uint64_t)dirfd, pathname, mode, flags);
+}
+
 static inline uint64_t sys_readlinkat(int64_t dirfd, const char *pathname, void *buf, uint64_t bufsiz) {
     return __syscall4_uppu(__NR_readlinkat, (uint64_t)dirfd, pathname, buf, bufsiz);
 }

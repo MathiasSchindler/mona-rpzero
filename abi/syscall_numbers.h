@@ -14,6 +14,7 @@
 #define __NR_symlinkat     36ull
 #define __NR_linkat        37ull
 #define __NR_chdir         49ull
+#define __NR_fchmodat      53ull
 #define __NR_openat        56ull
 #define __NR_close         57ull
 #define __NR_pipe2         59ull

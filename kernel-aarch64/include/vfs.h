@@ -44,6 +44,13 @@ int vfs_ramfile_link(const char *old_path_no_slash, const char *new_path_no_slas
 /* Lookup ramfile by absolute path. Returns 0 and sets out_id on success. */
 int vfs_ramfile_find_abs(const char *abs_path, uint32_t *out_id);
 
+/* Update overlay entry mode bits.
+ * abs_path must be a normalized absolute path.
+ * new_mode should include the existing file type bits (S_IF*).
+ */
+int vfs_ramfile_set_mode_abs(const char *abs_path, uint32_t new_mode);
+int vfs_ramdir_set_mode_abs(const char *abs_path, uint32_t new_mode);
+
 /* Access ramfile storage by id (index). Returns 0 on success, or -errno. */
 int vfs_ramfile_get(uint32_t id, uint8_t **out_data, uint64_t *out_size, uint64_t *out_cap, uint32_t *out_mode);
 int vfs_ramfile_set_size(uint32_t id, uint64_t new_size);

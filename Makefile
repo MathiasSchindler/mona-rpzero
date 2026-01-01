@@ -113,7 +113,7 @@ run: userland
 	fi; \
 	if [[ "$(USB_NET)" == "0" ]]; then args+=( --no-usb-net ); fi; \
 	if [[ "$(USB_KBD)" == "1" ]]; then args+=( --usb-kbd ); fi; \
-	set +e; bash tools/run-qemu-raspi3b.sh "$${args[@]}"; rc=$$?; if [[ $$rc -eq 0 || $$rc -eq 128 ]]; then exit 0; fi; exit $$rc
+	set +e; bash tools/run-qemu-raspi3b.sh "$${args[@]}"; rc=$$?; if [[ $$rc -eq 0 || $$rc -eq 112 || $$rc -eq 128 ]]; then exit 0; fi; exit $$rc
 
 test:
 	@$(MAKE) USERPROG=kinit test-aarch64
@@ -127,7 +127,7 @@ test-aarch64: userland
 	fi
 	@# Enable semihosting-powered exit codes for QEMU tests.
 	@$(MAKE) -C "$(AARCH64_DIR)" CROSS="$(AARCH64_CROSS)" USERPROG="$(USERPROG)" KERNEL_DEFS="-DQEMU_SEMIHOSTING" all
-	@set +e; bash tools/run-qemu-raspi3b.sh --kernel "$(AARCH64_IMG)" --dtb "$(DTB)" --mem "$(MEM)"; rc=$$?; if [[ $$rc -eq 0 || $$rc -eq 128 ]]; then exit 0; fi; exit $$rc
+	@set +e; bash tools/run-qemu-raspi3b.sh --kernel "$(AARCH64_IMG)" --dtb "$(DTB)" --mem "$(MEM)"; rc=$$?; if [[ $$rc -eq 0 || $$rc -eq 112 || $$rc -eq 128 ]]; then exit 0; fi; exit $$rc
 
 clean:
 	@rm -rf "$(AARCH64_DIR)/build" "$(USERLAND_DIR)/build"

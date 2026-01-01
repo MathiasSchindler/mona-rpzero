@@ -509,6 +509,34 @@ int vfs_ramfile_find_abs(const char *abs_path, uint32_t *out_id) {
     return 0;
 }
 
+int vfs_ramfile_set_mode_abs(const char *abs_path, uint32_t new_mode) {
+    if (!abs_path) return -(int)EINVAL;
+    const char *p = strip_leading_slashes_const(abs_path);
+    if (!p || *p == '\0') return -(int)ENOENT;
+    int idx = ramfile_find(p);
+    if (idx < 0) return -(int)ENOENT;
+
+    uint32_t inode_id = g_ramfiles[idx].inode_id;
+    if (inode_id >= (uint32_t)MAX_RAMINODES) return -(int)ENOENT;
+    if (!g_raminodes[inode_id].used) return -(int)ENOENT;
+    g_raminodes[inode_id].mode = new_mode;
+    return 0;
+}
+
+int vfs_ramdir_set_mode_abs(const char *abs_path, uint32_t new_mode) {
+    if (!abs_path) return -(int)EINVAL;
+
+    /* Root is not represented as an overlay ramdir; treat as non-overlay. */
+    if (cstr_eq_u64(abs_path, "/")) return -(int)ENOENT;
+
+    const char *p = strip_leading_slashes_const(abs_path);
+    if (!p || *p == '\0') return -(int)ENOENT;
+    int idx = ramdir_find(p);
+    if (idx < 0) return -(int)ENOENT;
+    g_ramdirs[idx].mode = new_mode;
+    return 0;
+}
+
 int vfs_ramfile_get(uint32_t id, uint8_t **out_data, uint64_t *out_size, uint64_t *out_cap, uint32_t *out_mode) {
     if (id >= (uint32_t)MAX_RAMFILES) return -(int)EINVAL;
     if (!g_ramfiles[id].used) return -(int)ENOENT;

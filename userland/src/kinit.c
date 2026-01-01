@@ -290,6 +290,33 @@ int main(int argc, char **argv, char **envp) {
         }
     }
 
+    /* Tool smoke test: which finds /bin/sh. */
+    {
+        char out[128];
+        const char *const which_argv[] = {"which", "sh", 0};
+        if (run_capture("/bin/which", which_argv, out, sizeof(out)) != 0) {
+            sys_puts("[kinit] which capture failed\n");
+            failed |= 1;
+        } else if (!mem_contains(out, cstr_len_u64_local(out), "/bin/sh\n")) {
+            sys_puts("[kinit] which output unexpected\n");
+            failed |= 1;
+        }
+    }
+
+    /* Tool smoke test: stat prints a basic summary for a known file. */
+    {
+        char out[256];
+        const char *const stat_argv[] = {"stat", "/uniq.txt", 0};
+        if (run_capture("/bin/stat", stat_argv, out, sizeof(out)) != 0) {
+            sys_puts("[kinit] stat capture failed\n");
+            failed |= 1;
+        } else if (!mem_contains(out, cstr_len_u64_local(out), "File: /uniq.txt") ||
+                   !mem_contains(out, cstr_len_u64_local(out), "Mode:")) {
+            sys_puts("[kinit] stat output unexpected\n");
+            failed |= 1;
+        }
+    }
+
     /* Phase-8 smoke test: process identity. */
     {
         const char *const test_argv[] = {"pid", 0};
@@ -318,6 +345,19 @@ int main(int argc, char **argv, char **envp) {
     {
         const char *const test_argv[] = {"sh", "-c", "mkdir -p /tmp; touch /tmp/hi; ls /tmp; rm /tmp/hi; ls /tmp", 0};
         failed |= run_test("/bin/sh -c \"mkdir -p /tmp; touch /tmp/hi; ls /tmp; rm /tmp/hi; ls /tmp\"", "/bin/sh", test_argv);
+    }
+
+    /* Tool smoke test: chmod updates mode on overlay files. */
+    {
+        char out[256];
+        const char *const chmod_argv[] = {"sh", "-c", "mkdir -p /tmp; touch /tmp/m; chmod 600 /tmp/m; stat /tmp/m", 0};
+        if (run_capture("/bin/sh", chmod_argv, out, sizeof(out)) != 0) {
+            sys_puts("[kinit] chmod/stat capture failed\n");
+            failed |= 1;
+        } else if (!mem_contains(out, cstr_len_u64_local(out), "Mode: 0600")) {
+            sys_puts("[kinit] chmod did not update mode as expected\n");
+            failed |= 1;
+        }
     }
 
     /* Tool smoke test: rmdir (overlay directories). */

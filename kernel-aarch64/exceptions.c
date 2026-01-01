@@ -267,6 +267,10 @@ uint64_t exception_handle(trap_frame_t *tf,
             ret = sys_newfstatat((int64_t)a0, a1, a2, a3);
             break;
 
+        case __NR_fchmodat:
+            ret = sys_fchmodat((int64_t)a0, a1, a2, a3);
+            break;
+
         case __NR_prlimit64:
             /* Not needed yet; pretend "no limit" and succeed for basic runtimes. */
             ret = 0;

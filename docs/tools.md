@@ -48,7 +48,7 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | cat | Partial | 2 |
 | false | Done | 1 |
 | uncpio | Planned | 0 |
-| chmod | Planned | 0 |
+| chmod | Partial | 2 |
 | find | Partial | 5 |
 | mkdir | Partial | 3 |
 | sed | Partial | 4 |
@@ -72,14 +72,14 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | col | Planned | 0 |
 | gunzip | Planned | 0 |
 | nl | Planned | 0 |
-| which | Planned | 0 |
+| which | Partial | 3 |
 | column | Planned | 0 |
 | gzip | Planned | 0 |
 | sort | Partial | 4 |
 | who | Planned | 0 |
 | cp | Partial | 4 |
 | head | Partial | 4 |
-| stat | Planned | 0 |
+| stat | Partial | 2 |
 | whoami | Planned | 0 |
 | cpio | Planned | 0 |
 | hexdump | Planned | 0 |

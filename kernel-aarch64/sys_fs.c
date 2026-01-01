@@ -1249,6 +1249,57 @@ uint64_t sys_newfstatat(int64_t dirfd, uint64_t pathname_user, uint64_t statbuf_
     return 0;
 }
 
+uint64_t sys_fchmodat(int64_t dirfd, uint64_t pathname_user, uint64_t mode, uint64_t flags) {
+    if (dirfd != AT_FDCWD) {
+        return (uint64_t)(-(int64_t)ENOSYS);
+    }
+    if (flags != 0) {
+        return (uint64_t)(-(int64_t)ENOSYS);
+    }
+    if (pathname_user == 0) {
+        return (uint64_t)(-(int64_t)EFAULT);
+    }
+
+    char in[MAX_PATH];
+    if (copy_cstr_from_user(in, sizeof(in), pathname_user) != 0) {
+        return (uint64_t)(-(int64_t)EFAULT);
+    }
+
+    proc_t *cur = &g_procs[g_cur_proc];
+    char path[MAX_PATH];
+    if (resolve_path(cur, in, path, sizeof(path)) != 0) {
+        return (uint64_t)(-(int64_t)EINVAL);
+    }
+
+    if (resolve_final_symlink(path, sizeof(path)) != 0) {
+        return (uint64_t)(-(int64_t)EINVAL);
+    }
+
+    /* procfs is read-only. */
+    if (cstr_eq_u64(path, "/proc") || cstr_eq_u64(path, "/proc/") || cstr_eq_u64(path, "/proc/ps")) {
+        return (uint64_t)(-(int64_t)EROFS);
+    }
+
+    /* Must exist. */
+    uint32_t old_mode = 0;
+    if (vfs_lookup_abs(path, 0, 0, &old_mode) != 0) {
+        return (uint64_t)(-(int64_t)ENOENT);
+    }
+
+    /* chmod updates permission bits (lowest 9 bits) while preserving the file type. */
+    uint32_t new_mode = (old_mode & ~0777u) | (uint32_t)(mode & 0777u);
+
+    /* Only overlay entries are mutable. */
+    if (vfs_ramfile_set_mode_abs(path, new_mode) == 0) {
+        return 0;
+    }
+    if (vfs_ramdir_set_mode_abs(path, new_mode) == 0) {
+        return 0;
+    }
+
+    return (uint64_t)(-(int64_t)EROFS);
+}
+
 uint64_t sys_readlinkat(int64_t dirfd, uint64_t pathname_user, uint64_t buf_user, uint64_t bufsiz) {
     if (dirfd != AT_FDCWD) {
         return (uint64_t)(-(int64_t)ENOSYS);

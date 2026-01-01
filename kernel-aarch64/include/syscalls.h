@@ -43,6 +43,7 @@ uint64_t sys_lseek(uint64_t fd, int64_t off, uint64_t whence);
 uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len);
 uint64_t sys_readlinkat(int64_t dirfd, uint64_t pathname_user, uint64_t buf_user, uint64_t bufsiz);
 uint64_t sys_newfstatat(int64_t dirfd, uint64_t pathname_user, uint64_t statbuf_user, uint64_t flags);
+uint64_t sys_fchmodat(int64_t dirfd, uint64_t pathname_user, uint64_t mode, uint64_t flags);
 
 uint64_t sys_execve(trap_frame_t *tf, uint64_t pathname_user, uint64_t argv_user, uint64_t envp_user);
 uint64_t sys_clone(trap_frame_t *tf, uint64_t flags, uint64_t child_stack, uint64_t ptid, uint64_t ctid, uint64_t tls, uint64_t elr);
