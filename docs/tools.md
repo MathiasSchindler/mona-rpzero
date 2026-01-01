@@ -74,10 +74,10 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | which | Planned | 0 |
 | column | Planned | 0 |
 | gzip | Planned | 0 |
-| sort | Planned | 0 |
+| sort | Partial | 4 |
 | who | Planned | 0 |
 | cp | Planned | 0 |
-| head | Planned | 0 |
+| head | Partial | 4 |
 | stat | Planned | 0 |
 | whoami | Planned | 0 |
 | cpio | Planned | 0 |
@@ -86,7 +86,7 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | strings | Planned | 0 |
 | cut | Planned | 0 |
 | od | Planned | 0 |
-| tail | Planned | 0 |
+| tail | Partial | 4 |
 | date | Done | 1 |
 | hostname | Planned | 0 |
 | paste | Planned | 0 |
