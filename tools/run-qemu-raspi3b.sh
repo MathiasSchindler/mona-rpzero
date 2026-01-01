@@ -8,7 +8,9 @@ Usage:
     [--sd sd.img] \
     --kernel path/to/kernel8.img \
     --dtb path/to/bcm2710-rpi-3-b.dtb \
-    [--serial stdio|vc] \
+    [--usb-kbd] \
+    [--no-usb-net] \
+    [--serial stdio|vc|null] \
     [--monitor none|stdio|vc] \
     --append "console=ttyAMA0 root=/dev/mmcblk0p2 rootwait"
 
@@ -23,6 +25,7 @@ Notes:
     avoids relying on the terminal's stdin focus). If you don't see it immediately, switch
     to the virtual console inside the QEMU window (often Ctrl-Alt-2; on macOS this may be
     Ctrl-Option-2 depending on your keyboard settings).
+  - `--serial null` disables the UART backend (useful for validating non-UART input paths).
   - When `--serial vc` is used, this script disables the QEMU monitor by default so that the
     console switch keys land on the UART. You can override with `--monitor stdio` or
     `--monitor vc`.
@@ -38,6 +41,8 @@ GFX=0
 DISPLAY_BACKEND=""
 SERIAL_BACKEND=""
 MONITOR_BACKEND=""
+USB_KBD=0
+USB_NET=1
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -48,6 +53,8 @@ while [[ $# -gt 0 ]]; do
     --mem) MEM="$2"; shift 2;;
     --graphic|--gfx) GFX=1; shift;;
     --display) DISPLAY_BACKEND="$2"; GFX=1; shift 2;;
+    --usb-kbd) USB_KBD=1; shift;;
+    --no-usb-net) USB_NET=0; shift;;
     --serial) SERIAL_BACKEND="$2"; shift 2;;
     --monitor) MONITOR_BACKEND="$2"; shift 2;;
     -h|--help) usage; exit 0;;
@@ -104,11 +111,11 @@ if [[ "$GFX" -eq 1 ]]; then
   fi
 
   case "$SERIAL_BACKEND" in
-    stdio|vc)
+    stdio|vc|null)
       cmd+=( -display "$DISPLAY_BACKEND" -serial "$SERIAL_BACKEND" )
       ;;
     *)
-      echo "Unknown --serial backend: $SERIAL_BACKEND (expected: stdio|vc)" >&2
+      echo "Unknown --serial backend: $SERIAL_BACKEND (expected: stdio|vc|null)" >&2
       exit 2
       ;;
   esac
@@ -136,7 +143,13 @@ if [[ -n "$APPEND" ]]; then
   cmd+=( -append "$APPEND" )
 fi
 
-# Optional: user-mode networking (works for Linux userland; your own kernel will need a driver)
-cmd+=( -netdev user,id=net0 -device usb-net,netdev=net0 )
+if [[ "$USB_NET" -eq 1 ]]; then
+  # Optional: user-mode networking (works for Linux userland; your own kernel will need a driver)
+  cmd+=( -netdev user,id=net0 -device usb-net,netdev=net0 )
+fi
+
+if [[ "$USB_KBD" -eq 1 ]]; then
+  cmd+=( -device usb-kbd )
+fi
 
 exec "${cmd[@]}"

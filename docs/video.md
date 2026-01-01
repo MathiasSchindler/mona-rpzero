@@ -1,6 +1,6 @@
-# video.md — Framebuffer & FullHD Terminal Plan (QEMU-first, Pi Zero 2 W later)
+# video.md — Framebuffer & High-Resolution Terminal (status + plan)
 
-Date: 2025-12-30
+Last updated: 2026-01-01
 
 Goal: add **framebuffer output** and a **high-resolution (1920×1080) terminal** to the kernel, validated in **QEMU (-M raspi3b)** first and then moved toward **real Raspberry Pi Zero 2 W (BCM2710A1)**.
 
@@ -8,6 +8,31 @@ Constraints (project style):
 - No external runtime deps.
 - Keep `make test` / UART workflow intact; framebuffer is additive.
 - Prefer small, testable steps with clear “done” criteria.
+
+---
+
+## Current status (what works today)
+
+### Output
+- Kernel UART output remains the canonical console and is mirrored to the framebuffer in gfx mode.
+
+- Scrolling is fast in gfx mode: uses a larger virtual framebuffer + “virtual offset” hardware scrolling (no giant memcpy of device memory).
+- `make run-gfx-kbd-debug`: Same as above, but with `--serial stdio` so you can see USB debug logs in your terminal while iterating on enumeration.
+
+  - `Ctrl+Option+1`: framebuffer view
+  - `Ctrl+Option+2`: UART console (where `/bin/sh` runs)
+- Experimental: `make run-gfx-kbd` tries to use a USB HID keyboard device in QEMU (not via UART).
+  This is an early WIP and may depend on QEMU/device quirks.
+
+### How to run
+- `make run-gfx` (framebuffer window + UART on host terminal)
+- `make run-gfx-vc` (framebuffer window + UART inside the QEMU window; host terminal stays mostly quiet)
+- `make run-gfx-kbd` (adds a QEMU `usb-kbd` device and disables the UART backend; intended to validate non-UART input, still WIP)
+- Note: the keyboard run modes disable QEMU's `usb-net` device so the hub's first downstream device is the keyboard (simplifies enumeration).
+
+### Known limitations / not implemented yet
+- True “type directly into the framebuffer terminal” input (i.e. not via UART) is WORK IN PROGRESS.
+- Real-hardware (Pi Zero 2 W) validation is not done yet; some mailbox address and bus/phys translation details may still need hardening.
 
 ---
 
@@ -21,7 +46,7 @@ Start with **Pi mailbox framebuffer** (aka “firmware framebuffer”) via the *
 Later (optional, long-term) add a VC4/KMS path (more Linux-like, more complex).
 
 **Acceptance for Phase 0**:
-- We can request a framebuffer at boot and draw pixels.
+- DONE: We can request a framebuffer at boot and draw pixels.
 
 ---
 
@@ -76,8 +101,8 @@ In `mmu.c` (or wherever mappings are created), map the framebuffer region:
 - Later optimize (write-combine / cacheable + explicit flush) if needed.
 
 **Acceptance for Phase 1**:
-- On boot, QEMU shows a solid-color screen (e.g., fill with a gradient or color bars).
-- UART remains functional.
+- DONE: On boot, QEMU shows framebuffer output.
+- DONE: UART remains functional.
 
 ---
 
@@ -114,9 +139,9 @@ Color format:
 - Use 32bpp XRGB8888 in memory.
 
 **Acceptance for Phase 2**:
-- Kernel prints boot log to framebuffer.
-- Scrolling works.
-- Cursor works.
+- DONE: Kernel prints boot log to framebuffer (via UART mirroring).
+- DONE: Scrolling works.
+- DONE: Cursor works.
 
 ### 2.3 ANSI subset (only what you need)
 Implement a small subset of ANSI escape sequences:
@@ -130,7 +155,8 @@ Implement a small subset of ANSI escape sequences:
 Keep it minimal; you can extend as actual userland programs demand it.
 
 **Acceptance for Phase 2.3**:
-- `sh` feels usable in the framebuffer terminal for basic interaction.
+- DONE: Basic ANSI works for common sequences used by the userland tools.
+- PARTIAL: `sh` is usable, but input is still UART-based (see Phase 4.2).
 
 ---
 
@@ -145,6 +171,9 @@ Do:
   - Option A (simple): redraw all cells after scroll.
   - Option B (better): `memmove` framebuffer rows up by `glyph_h * pitch`, then render only the new line.
 
+**Status**:
+- DONE (better-than-Option B): scrolling uses a larger virtual framebuffer and moves the viewport using mailbox “set virtual offset”.
+
 ### 3.2 Optional: double buffering
 If tearing is visible in QEMU or hardware:
 - Allocate two framebuffers (or one framebuffer + one shadow buffer).
@@ -152,6 +181,9 @@ If tearing is visible in QEMU or hardware:
 
 Mailbox firmware sometimes supports virtual offset for page-flip style behavior; if available:
 - Use “set virtual offset” tag to flip.
+
+**Status**:
+- NOT IMPLEMENTED: we currently use virtual offset for scrolling, not for page flipping.
 
 ### 3.3 Cache maintenance strategy (hardware-critical)
 On real Pi, framebuffer memory can be:
@@ -163,8 +195,8 @@ Start with uncached mapping. If performance is insufficient:
 - Keep it cacheable and clean dcache lines for updated regions.
 
 **Acceptance for Phase 3**:
-- FullHD console is responsive (typing feels immediate).
-- No “missing pixels” / stale glyphs on real hardware.
+- DONE (QEMU): terminal rendering and scroll are responsive.
+- NOT DONE (hardware): cache/mapping strategy still needs validation on real Pi.
 
 ---
 
@@ -180,6 +212,9 @@ Create a small abstraction:
 
 Keep UART as the “always works” channel.
 
+**Status**:
+- DONE (pragmatic equivalent): UART output is mirrored into `termfb` in gfx mode.
+
 ### 4.2 Keyboard input (QEMU vs hardware)
 Full terminal UX needs input beyond UART.
 
@@ -191,6 +226,10 @@ Short-term options:
   - The QEMU monitor is disabled by default for this mode so the console switch keys land on
     the UART.
 - In QEMU, consider a simple emulated HID path if available on raspi3b machine.
+
+**Status**:
+- DONE: QEMU in-window UART console workflow (`make run-gfx-vc`) for convenient input.
+- WORK IN PROGRESS: keyboard input directly into framebuffer terminal without UART.
 
 Long-term (hardware):
 - USB host stack + HID keyboard is a large project; defer unless you want a full local console.
@@ -209,6 +248,9 @@ Ensure your QEMU run path enables a display:
   - If you want input without relying on terminal focus: `-serial vc`
     - If you don't see the serial text immediately, switch to the virtual console in the
       QEMU GUI (often Ctrl-Alt-2; on macOS this may be Ctrl-Option-2)
+
+**Status**:
+- DONE: `make run-gfx` and `make run-gfx-vc` exist and keep `make test` headless-friendly.
 
 Add a small doc snippet to the script/comments:
 - “Framebuffer output appears in QEMU window; UART still on stdio.”

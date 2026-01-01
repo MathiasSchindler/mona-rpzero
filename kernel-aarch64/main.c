@@ -8,6 +8,11 @@
 #include "time.h"
 #include "fb.h"
 #include "termfb.h"
+#include "console_in.h"
+
+#ifdef ENABLE_USB_KBD
+#include "usb_kbd.h"
+#endif
 
 #ifndef FB_REQ_W
 #define FB_REQ_W 1920u
@@ -38,7 +43,11 @@ extern unsigned char initramfs_end[];
 void kmain(unsigned long dtb_ptr) {
     uart_init();
 
+    /* Time is used for polling timeouts (e.g. USB). */
     time_init();
+
+    /* Console input polls UART (and optional non-UART backends). */
+    console_in_init();
 
     uart_write("mona-rpzero aarch64 kernel\n");
 
@@ -80,6 +89,15 @@ void kmain(unsigned long dtb_ptr) {
 
             /* Quick ANSI smoke test (colors + reset). */
             termfb_write_ansi("\x1b[32mANSI ok\x1b[0m\n\n");
+
+        #ifdef ENABLE_USB_KBD
+            /*
+             * Experimental: USB HID boot keyboard input.
+             * Initialize after time + MMU, and after termfb is ready so logs are visible
+             * even if the QEMU UART backend is disabled.
+             */
+            usb_kbd_init();
+        #endif
         }
     #endif
 

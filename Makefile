@@ -36,7 +36,7 @@ QEMU_DISPLAY ?= cocoa
 USERPROG ?= init
 
 
-.PHONY: all run run-gfx run-gfx-vc test clean
+.PHONY: all run run-gfx run-gfx-vc run-gfx-kbd run-gfx-kbd-debug test clean
 .PHONY: aarch64-kernel run-aarch64 test-aarch64 userland
 
 all: aarch64-kernel
@@ -93,6 +93,28 @@ run-gfx-vc: userland
 	@$(MAKE) -C "$(AARCH64_DIR)" CROSS="$(AARCH64_CROSS)" USERPROG="$(USERPROG)" \
 		KERNEL_DEFS="-DQEMU_SEMIHOSTING -DENABLE_FB -DFB_REQ_W=$(FB_W) -DFB_REQ_H=$(FB_H) -DFB_REQ_BPP=$(FB_BPP)" all
 	@set +e; bash tools/run-qemu-raspi3b.sh --gfx --serial vc --monitor none --display "$(QEMU_DISPLAY)" --kernel "$(AARCH64_IMG)" --dtb "$(DTB)" --mem "$(MEM)"; rc=$$?; if [[ $$rc -eq 0 || $$rc -eq 128 ]]; then exit 0; fi; exit $$rc
+
+run-gfx-kbd: userland
+	@echo "Starting QEMU (raspi3b) with graphics + framebuffer + usb-kbd (WIP)"
+	@if [[ -z "$(DTB)" ]]; then \
+		echo "No DTB found. Put one into out/ or archive/, or pass DTB=..." >&2; \
+		echo "Tried: $(DTB_CANDIDATES)" >&2; \
+		exit 2; \
+	fi
+	@$(MAKE) -C "$(AARCH64_DIR)" CROSS="$(AARCH64_CROSS)" USERPROG="$(USERPROG)" \
+		KERNEL_DEFS="-DQEMU_SEMIHOSTING -DENABLE_FB -DENABLE_USB_KBD -DFB_REQ_W=$(FB_W) -DFB_REQ_H=$(FB_H) -DFB_REQ_BPP=$(FB_BPP)" all
+	@set +e; bash tools/run-qemu-raspi3b.sh --gfx --usb-kbd --no-usb-net --serial null --monitor none --display "$(QEMU_DISPLAY)" --kernel "$(AARCH64_IMG)" --dtb "$(DTB)" --mem "$(MEM)"; rc=$$?; if [[ $$rc -eq 0 || $$rc -eq 128 ]]; then exit 0; fi; exit $$rc
+
+run-gfx-kbd-debug: userland
+	@echo "Starting QEMU (raspi3b) with graphics + framebuffer + usb-kbd (DEBUG serial=stdio)"
+	@if [[ -z "$(DTB)" ]]; then \
+		echo "No DTB found. Put one into out/ or archive/, or pass DTB=..." >&2; \
+		echo "Tried: $(DTB_CANDIDATES)" >&2; \
+		exit 2; \
+	fi
+	@$(MAKE) -C "$(AARCH64_DIR)" CROSS="$(AARCH64_CROSS)" USERPROG="$(USERPROG)" \
+		KERNEL_DEFS="-DQEMU_SEMIHOSTING -DENABLE_FB -DENABLE_USB_KBD -DENABLE_USB_KBD_DEBUG -DFB_REQ_W=$(FB_W) -DFB_REQ_H=$(FB_H) -DFB_REQ_BPP=$(FB_BPP)" all
+	@set +e; bash tools/run-qemu-raspi3b.sh --gfx --usb-kbd --no-usb-net --serial stdio --monitor none --display "$(QEMU_DISPLAY)" --kernel "$(AARCH64_IMG)" --dtb "$(DTB)" --mem "$(MEM)"; rc=$$?; if [[ $$rc -eq 0 || $$rc -eq 128 ]]; then exit 0; fi; exit $$rc
 
 test:
 	@$(MAKE) USERPROG=kinit test-aarch64

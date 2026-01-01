@@ -9,6 +9,7 @@
 #include "sys_util.h"
 #include "stat_bits.h"
 #include "uart_pl011.h"
+#include "console_in.h"
 #include "vfs.h"
 
 #define AT_FDCWD ((int64_t)-100)
@@ -722,15 +723,13 @@ uint64_t sys_read(uint64_t fd, uint64_t buf_user, uint64_t len) {
         volatile char *dst = (volatile char *)(uintptr_t)buf_user;
 
         /* Block for the first byte, then drain any immediately available bytes. */
-        char c = uart_getc_blocking();
-        if (c == '\r') c = '\n';
+        char c = console_in_getc_blocking();
         dst[0] = c;
 
         uint64_t n = 1;
         for (; n < len; n++) {
             char t;
-            if (!uart_try_getc(&t)) break;
-            if (t == '\r') t = '\n';
+            if (!console_in_try_getc(&t)) break;
             dst[n] = t;
         }
         return n;
