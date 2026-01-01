@@ -50,7 +50,7 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | chmod | Planned | 0 |
 | find | Partial | 5 |
 | mkdir | Partial | 3 |
-| sed | Planned | 0 |
+| sed | Partial | 4 |
 | uniq | Partial | 4 |
 | chown | Planned | 0 |
 | free | Planned | 0 |
