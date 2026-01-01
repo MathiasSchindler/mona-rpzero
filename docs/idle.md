@@ -15,63 +15,33 @@ Two common reasons a small kernel pegs CPU:
 - The kernel/userland is **busy-polling** (spinning) instead of blocking.
 - The kernel never executes low-power/wait instructions like `wfi`/`wfe` in an “idle” path.
 
-In this repo, both happen today.
+Historically, this repo did both. The current implementation (Option C) fixes that by making sleeps and stdin reads *truly blocking* and by using `wfi` when nothing is runnable.
 
-## Current state in this repo (what causes the spinning)
+## What used to cause spinning (and what changed)
 
 These are the main hotspots:
 
-- **Console input “blocking” is a spin-loop**
-  - [kernel-aarch64/console_in.c](kernel-aarch64/console_in.c) implements `console_in_getc_blocking()` as `while (!try_getc) { /* spin */ }`.
-  - `console_in_try_getc()` calls `console_in_poll()`, which actively polls UART and (optionally) USB keyboard.
+- **Console input “blocking” was a spin-loop**
+  - [kernel-aarch64/console_in.c](kernel-aarch64/console_in.c) still contains a spin-based `console_in_getc_blocking()` helper, but the *syscall layer* now provides true blocking semantics for stdin reads.
+  - The input backends are still polled (UART and optional USB keyboard), but polling is no longer done in a tight loop from userland.
 
-- **Sleep uses busy-wait, not timer interrupts**
-  - [kernel-aarch64/sched.c](kernel-aarch64/sched.c) explicitly busy-waits until the earliest sleep deadline (“keeps nanosleep functional without timer IRQs”).
+- **Sleep used to be a busy-wait**
+  - The scheduler used to busy-wait until the next sleep deadline.
+  - This has been replaced with `wfi`-based idle plus a timer tick that wakes the kernel so it can reevaluate sleepers (periodic when polling is needed, one-shot when only sleepers exist).
 
-- **IRQ exceptions aren’t handled as “returnable” events yet**
-  - [kernel-aarch64/arch/exceptions.S](kernel-aarch64/arch/exceptions.S) only has a fast return path for EL0 SVC syscalls.
-  - Any other exception kind (including IRQ) currently ends up in a report+halt path.
-  - [kernel-aarch64/exceptions.c](kernel-aarch64/exceptions.c) similarly focuses on the EL0 SVC path.
+- **IRQ exceptions were not returnable**
+  - IRQs are now handled as returnable events while in EL1h (kernel context), which is what `wfi` idle relies on.
+  - EL0 runs with IRQs masked (cooperative kernel), so we do not currently take timer IRQs while executing user code.
 
-- **Time is monotonic-only right now**
-  - [kernel-aarch64/time.c](kernel-aarch64/time.c) reads the generic counter (`cntpct_el0`) but does not program a periodic timer interrupt.
+- **Time was monotonic-only**
+  - The kernel now also programs the AArch64 physical timer (CNTP) for wakeups (periodic or one-shot depending on idle conditions).
 
 Implication: adding a naive “idle task that does `wfi`” is not enough on its own:
 
 - If userland is polling for input, it stays runnable forever → the scheduler never reaches “no runnable tasks”.
 - If you make everything sleep without proper timer IRQ plumbing, `wfi` could sleep forever.
 
-## Options (from easiest to most correct)
-
-### Option A: QEMU-side throttling (fastest win)
-
-If your goal is simply “don’t burn my laptop core while I’m at the prompt”, QEMU can be told to sleep/yield when the guest is spinning.
-
-Typical approach:
-
-- Run QEMU with instruction counting + sleeping enabled, e.g. `-icount shift=auto,sleep=on`.
-
-Pros:
-- No kernel changes.
-- Big CPU reduction for spin-heavy guests.
-
-Cons:
-- It can change timing characteristics (usually fine for this project).
-- It’s QEMU-only; real hardware still needs proper idle.
-
-### Option B: “Minimal idle” (small code, limited effect)
-
-A minimal idle loop is basically:
-
-- If no runnable processes: enable interrupts and execute `wfi` (wait-for-interrupt).
-
-Pros:
-- Easy and architecturally correct.
-
-Cons:
-- In this repo today, it won’t reduce CPU much until you also stop busy-polling.
-
-### Option C: Real low-CPU idle (recommended direction)
+## Option C: Real low-CPU idle (current direction)
 
 This is the full solution:
 
@@ -121,6 +91,44 @@ What to change:
 Acceptance:
 - With IRQs still disabled at the source, the kernel should behave exactly as before.
 - With a synthetic IRQ enabled later, the kernel should not halt.
+
+### Step status (what’s implemented today)
+
+This is the current status of the Option C steps in this repo:
+
+- **Step 1 (IRQ exception plumbing): implemented for EL1h IRQs**
+  - `wfi` idle relies on taking IRQs in EL1h and returning.
+  - Implementation:
+    - EL1h IRQ entry is IRQ-safe and returnable in [kernel-aarch64/arch/exceptions.S](kernel-aarch64/arch/exceptions.S).
+    - The C dispatcher treats EL1h IRQ (kind 5) as non-fatal and calls `irq_handle()` in [kernel-aarch64/exceptions.c](kernel-aarch64/exceptions.c).
+  - Important constraint:
+    - EL0 runs with IRQs masked (cooperative kernel). Syscall return restores `SPSR_EL1` to `0x3c0` (EL0t with DAIF masked) in [kernel-aarch64/arch/exceptions.S](kernel-aarch64/arch/exceptions.S).
+    - As a result, timer IRQs won’t preempt user code; they primarily wake the kernel out of `wfi`.
+
+- **Step 2 (idle primitive): implemented**
+  - `irq_enable()`, `irq_disable()`, and `cpu_wfi()` exist in [kernel-aarch64/include/irq.h](kernel-aarch64/include/irq.h).
+  - The scheduler uses these around the idle loop in [kernel-aarch64/sched.c](kernel-aarch64/sched.c).
+
+- **Step 3 (periodic tick + IRQ source): implemented (CNTP + local-peripheral routing)**
+  - The AArch64 physical timer is programmed via `time_tick_init()` plus either `time_tick_enable_periodic()` or `time_tick_schedule_oneshot_ns()` in [kernel-aarch64/time.c](kernel-aarch64/time.c).
+  - The CNTPNSIRQ route for core 0 is enabled using the BCM2836/BCM2710 local peripheral registers (base `0x4000_0000`) in [kernel-aarch64/irq.c](kernel-aarch64/irq.c).
+  - The periodic tick is initialized in `irq_init()` from [kernel-aarch64/main.c](kernel-aarch64/main.c).
+  - MMU note: the local-peripheral MMIO window is mapped so those registers are accessible (see [kernel-aarch64/mmu.c](kernel-aarch64/mmu.c)).
+
+- **Step 4 (remove scheduler busy-wait): implemented (`wfi` idle)**
+  - When there are sleepers or blocked I/O but nothing runnable, the scheduler enables IRQs and executes `wfi` in [kernel-aarch64/sched.c](kernel-aarch64/sched.c).
+  - This is what stops QEMU from pegging a host core when the guest is idle.
+
+- **Step 5 (stdin truly blocking): implemented (blocked process state + wake/complete)**
+  - `read()` on the UART-backed fd uses true blocking:
+    - If no input is available, `sys_read()` marks the process `PROC_BLOCKED_IO`, records a pending read, and reschedules in [kernel-aarch64/sys_fs.c](kernel-aarch64/sys_fs.c).
+    - The scheduler wakes one blocked reader when buffered input exists (still polled) and completes the pending read on context switch in [kernel-aarch64/sched.c](kernel-aarch64/sched.c).
+  - Input buffering helpers are provided by `console_in_has_data()` / `console_in_pop()` in [kernel-aarch64/console_in.c](kernel-aarch64/console_in.c).
+
+- **Step 6 (tickless idle): implemented (sleepers-only)**
+  - When the system has sleepers but no runnable tasks and no blocked console I/O, the scheduler programs a **one-shot** timer for the earliest sleep deadline, then executes `wfi`.
+  - If console I/O is blocked (meaning we still need to poll UART/USB keyboard input), the kernel keeps using a **periodic** tick.
+  - The policy is implemented in [kernel-aarch64/sched.c](kernel-aarch64/sched.c) and uses the timer helpers in [kernel-aarch64/time.c](kernel-aarch64/time.c).
 
 ### Step 2 — Introduce an “idle” primitive (safe building block)
 
@@ -215,11 +223,10 @@ This is optional and can wait until after the Pi bring-up.
 - Minimal change that actually helps: remove busy loops (sleep + console) so the kernel can reach idle.
 - Minimal change that is *correct* on real hardware: real IRQ handling + real wakeup sources.
 
-## Quick checklist: what to implement if you want the CPU drop first
+## Quick checklist (what matters for the CPU drop)
 
-If your priority is “host CPU drops while at prompt in QEMU”, the shortest practical path is:
+If your priority is “host CPU drops while at prompt in QEMU”, the key ingredients are:
 
-1) Add QEMU `-icount ... sleep=on` support (Option A), or
-2) Implement Step 1 + Step 5 (stop polling in `read()`), then Step 4.
-
-Both are valid; (2) is more “real kernel” work and pays off for Pi Zero 2 W.
+- Stop spinning in “blocking” code paths (stdin reads and sleeps).
+- Make sure the scheduler reaches an idle state and uses `wfi` with IRQs enabled.
+- Provide a wake source (periodic tick is the current one).

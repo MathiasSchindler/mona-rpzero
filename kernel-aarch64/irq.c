@@ -35,7 +35,7 @@ void irq_init(void) {
 void irq_handle(void) {
     uint32_t src = CORE0_IRQ_SOURCE;
     if (src & (1u << 1)) {
-        /* AArch64 physical timer IRQ. Rearm it to clear the interrupt. */
-        time_tick_rearm();
+        /* AArch64 physical timer IRQ. Acknowledge and (re)arm as needed. */
+        time_tick_handle_irq();
     }
 }

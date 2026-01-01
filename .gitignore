@@ -6,6 +6,9 @@ kernel/
 kernel-aarch64/build/
 userland/build/
 
+# Workspace scratch outputs
+out/
+
 # Generische Build-Artefakte (C/ASM)
 *.o
 *.a

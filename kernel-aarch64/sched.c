@@ -129,6 +129,22 @@ int sched_pick_next_runnable(void) {
             return -1;
         }
 
+        /* Tickless idle (sleepers only): program a one-shot tick for the next
+         * deadline. If console I/O is blocked, keep periodic ticks so we can
+         * poll input backends.
+         */
+        if (has_sleepers && !has_blocked_io) {
+            uint64_t now = time_now_ns();
+            if (earliest > now) {
+                time_tick_schedule_oneshot_ns(earliest - now);
+            } else {
+                /* Deadline already passed; loop will wake sleepers. */
+                time_tick_schedule_oneshot_ns(1);
+            }
+        } else {
+            time_tick_enable_periodic();
+        }
+
         irq_enable();
         cpu_wfi();
         irq_disable();
