@@ -195,6 +195,22 @@ int main(int argc, char **argv, char **envp) {
         failed |= run_test("/bin/sh -c \"/bin/printf ... | /bin/sort\"", "/bin/sh", test_argv);
     }
 
+    /* Tool smoke test: tee writes to stdout and a file. */
+    {
+        const char *const test_argv[] = {"sh", "-c", "mkdir -p /tmp; /bin/printf \"x\\n\" | /bin/tee /tmp/tee_test; /bin/cat /tmp/tee_test", 0};
+        failed |= run_test("/bin/sh -c \"... tee ...\"", "/bin/sh", test_argv);
+    }
+
+    /* Tool smoke test: rev reverses each line. */
+    {
+        char out[256];
+        const char *const rev_argv[] = {"sh", "-c", "/bin/printf \"abc\\n\" | /bin/rev", 0};
+        if (run_capture("/bin/sh", rev_argv, out, sizeof(out)) != 0 || !mem_contains(out, cstr_len_u64_local(out), "cba")) {
+            sys_puts("[kinit] rev selftest failed\n");
+            failed |= 1;
+        }
+    }
+
     /* Phase-8 smoke test: process identity. */
     {
         const char *const test_argv[] = {"pid", 0};

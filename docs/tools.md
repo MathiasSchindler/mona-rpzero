@@ -38,7 +38,7 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | tr | Partial | 5 |
 | bpe | Planned | 0 |
 | env | Planned | 0 |
-| rev | Planned | 0 |
+| rev | Partial | 2 |
 | true | Done | 1 |
 | expr | Planned | 0 |
 | rm | Done | 4 |
@@ -98,7 +98,7 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | diff | Planned | 0 |
 | init | Partial | 1 |
 | printf | Partial | 4 |
-| tee | Planned | 0 |
+| tee | Partial | 3 |
 | yes | Planned | 0 |
 | dirname | Planned | 0 |
 | kill | Done | 3 |
