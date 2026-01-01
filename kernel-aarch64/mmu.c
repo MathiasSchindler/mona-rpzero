@@ -15,7 +15,8 @@
 #define TABLE_ENTRIES 512ull
 
 #define PERIPH_BASE 0x3F000000ull
-#define PERIPH_END  0x40000000ull
+/* Include the BCM2836/BCM2710 "local peripherals" window at 0x4000_0000. */
+#define PERIPH_END  0x40001000ull
 
 /* Descriptor bits */
 #define DESC_VALID   (1ull << 0)
@@ -49,7 +50,8 @@
 #define ATTR_NORMAL 0
 #define ATTR_DEVICE 1
 
-static uint64_t *g_l2_template = 0;
+static uint64_t *g_l2_template0 = 0;
+static uint64_t *g_l2_template1 = 0;
 
 static inline uint64_t align_down(uint64_t v, uint64_t a);
 static inline uint64_t align_up(uint64_t v, uint64_t a);
@@ -106,7 +108,7 @@ int mmu_mark_region_device(uint64_t phys_start, uint64_t size_bytes) {
     if (!mmu_is_enabled()) {
         return -1;
     }
-    if (!g_l2_template) {
+    if (!g_l2_template0) {
         return -1;
     }
     if (size_bytes == 0) {
@@ -126,7 +128,7 @@ int mmu_mark_region_device(uint64_t phys_start, uint64_t size_bytes) {
         if (idx >= TABLE_ENTRIES) {
             return -1;
         }
-        g_l2_template[idx] = make_block_desc(pa, ATTR_DEVICE, PTE_AP_RW_EL1, /*is_device=*/1);
+        g_l2_template0[idx] = make_block_desc(pa, ATTR_DEVICE, PTE_AP_RW_EL1, /*is_device=*/1);
     }
 
     tlbi_vmalle1();
@@ -145,7 +147,7 @@ void mmu_ttbr0_write(uint64_t ttbr0_pa) {
 }
 
 uint64_t mmu_ttbr0_create_with_user_pa(uint64_t user_pa_base) {
-    if (!g_l2_template) {
+    if (!g_l2_template0) {
         return 0;
     }
     if ((user_pa_base & 0x1FFFFFull) != 0) {
@@ -153,23 +155,32 @@ uint64_t mmu_ttbr0_create_with_user_pa(uint64_t user_pa_base) {
     }
 
     uint64_t *l1 = alloc_table_page();
-    uint64_t *l2 = alloc_table_page();
-    if (!l1 || !l2) {
+    uint64_t *l2_0 = alloc_table_page();
+    uint64_t *l2_1 = alloc_table_page();
+    if (!l1 || !l2_0 || !l2_1) {
         return 0;
     }
 
-    /* Clone template L2. */
+    /* Clone template L2[0..1GiB). */
     for (uint64_t i = 0; i < TABLE_ENTRIES; i++) {
-        l2[i] = g_l2_template[i];
+        l2_0[i] = g_l2_template0[i];
+    }
+
+    /* Clone template L2[1GiB..2GiB). */
+    if (g_l2_template1) {
+        for (uint64_t i = 0; i < TABLE_ENTRIES; i++) {
+            l2_1[i] = g_l2_template1[i];
+        }
     }
 
     /* Override the user block mapping to point at the chosen physical base.
      * Keep it RW for EL0.
      */
     const uint64_t user_idx = (USER_REGION_BASE >> 21) & 0x1FFu;
-    l2[user_idx] = make_block_desc(user_pa_base, ATTR_NORMAL, PTE_AP_RW_EL0, 0);
+    l2_0[user_idx] = make_block_desc(user_pa_base, ATTR_NORMAL, PTE_AP_RW_EL0, 0);
 
-    l1[0] = make_table_desc((uint64_t)(uintptr_t)l2);
+    l1[0] = make_table_desc((uint64_t)(uintptr_t)l2_0);
+    l1[1] = make_table_desc((uint64_t)(uintptr_t)l2_1);
     return (uint64_t)(uintptr_t)l1;
 }
 
@@ -241,7 +252,8 @@ void mmu_init_identity(uint64_t ram_base, uint64_t ram_size) {
     uint64_t *l1_low = alloc_table_page();
     uint64_t *l1_high = alloc_table_page();
     uint64_t *l2_0 = alloc_table_page();
-    if (!l1_low || !l1_high || !l2_0) {
+    uint64_t *l2_1 = alloc_table_page();
+    if (!l1_low || !l1_high || !l2_0 || !l2_1) {
         uart_write("mmu: OOM allocating tables\n");
         return;
     }
@@ -249,15 +261,19 @@ void mmu_init_identity(uint64_t ram_base, uint64_t ram_size) {
     uint64_t l1_low_pa = (uint64_t)(uintptr_t)l1_low;
     uint64_t l1_high_pa = (uint64_t)(uintptr_t)l1_high;
     uint64_t l2_pa = (uint64_t)(uintptr_t)l2_0;
+    uint64_t l2_1_pa = (uint64_t)(uintptr_t)l2_1;
 
-    /* TTBR0: L1[0] -> L2 for VA 0..1GB */
+    /* TTBR0: L1[0] -> L2 for VA 0..1GB, L1[1] -> L2 for VA 1..2GB */
     l1_low[0] = make_table_desc(l2_pa);
+    l1_low[1] = make_table_desc(l2_1_pa);
 
     /* TTBR1: higher-half base index for 39-bit VA is 256 (VA[38:30] = 0b1_0000_0000). */
     l1_high[256] = make_table_desc(l2_pa);
+    l1_high[257] = make_table_desc(l2_1_pa);
 
-    /* Remember the template used for low identity mapping so we can clone it for per-process TTBR0. */
-    g_l2_template = l2_0;
+    /* Remember the templates used for low identity mapping so we can clone them for per-process TTBR0. */
+    g_l2_template0 = l2_0;
+    g_l2_template1 = l2_1;
 
     /* Map 0..1GB in 2MB blocks so we can carve out device range */
     for (uint64_t i = 0; i < TABLE_ENTRIES; i++) {
@@ -270,6 +286,18 @@ void mmu_init_identity(uint64_t ram_base, uint64_t ram_size) {
             ap = PTE_AP_RW_EL0;
         }
         l2_0[i] = make_block_desc(pa, attr, ap, is_dev);
+    }
+
+    /* Map 1GB..2GB in 2MB blocks.
+     * This region is mostly unused, but we need the BCM2836/BCM2710 local
+     * peripherals at 0x4000_0000.
+     */
+    for (uint64_t i = 0; i < TABLE_ENTRIES; i++) {
+        uint64_t va = 0x40000000ull + i * 0x200000ull;
+        uint64_t pa = va;
+        int is_dev = (va >= PERIPH_BASE && va < PERIPH_END);
+        int attr = is_dev ? ATTR_DEVICE : ATTR_NORMAL;
+        l2_1[i] = make_block_desc(pa, attr, PTE_AP_RW_EL1, is_dev);
     }
 
     /* MAIR: Attr0=Normal WBWA, Attr1=Device-nGnRE */

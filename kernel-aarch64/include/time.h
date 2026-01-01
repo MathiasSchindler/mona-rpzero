@@ -15,3 +15,11 @@ void time_init(void);
 
 uint64_t time_freq_hz(void);
 uint64_t time_now_ns(void);
+
+/* Periodic tick using the AArch64 physical timer (CNTP).
+ *
+ * The tick is used to wake the kernel out of `wfi` when there are sleeping
+ * tasks or blocked stdin reads.
+ */
+void time_tick_init(uint32_t hz);
+void time_tick_rearm(void);

@@ -76,7 +76,11 @@ all: aarch64-kernel
 AARCH64_DIR ?= kernel-aarch64
 # Homebrew on macOS typically provides the bare-metal toolchain as `aarch64-elf-*`.
 # You can override this (e.g. `make AARCH64_CROSS=aarch64-linux-gnu- ...`).
+ifeq ($(UNAME_S),Darwin)
 AARCH64_CROSS ?= aarch64-elf-
+else
+AARCH64_CROSS ?= aarch64-linux-gnu-
+endif
 AARCH64_IMG := $(AARCH64_DIR)/build/kernel8.img
 
 USERLAND_DIR ?= userland

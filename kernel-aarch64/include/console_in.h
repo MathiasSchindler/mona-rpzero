@@ -18,8 +18,18 @@ void console_in_poll(void);
 /* Inject a character from a non-UART input backend (e.g. USB keyboard). */
 void console_in_inject_char(char c);
 
+/* Returns 1 if buffered data is available (does not poll). */
+int console_in_has_data(void);
+
+/* Pop one buffered character (does not poll). Returns 1 if read into *out. */
+int console_in_pop(char *out);
+
 /* Non-blocking: returns 1 if a char was read into *out, else 0. */
 int console_in_try_getc(char *out);
 
-/* Blocking: spins until a character is available. */
+/* Blocking: spins until a character is available.
+ *
+ * Note: Option C makes stdin reads truly blocking at the syscall layer.
+ * This helper remains a spin-based fallback.
+ */
 char console_in_getc_blocking(void);

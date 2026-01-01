@@ -6,6 +6,7 @@
 #include "linux_abi.h"
 #include "pipe.h"
 #include "proc.h"
+#include "sched.h"
 #include "sys_util.h"
 #include "stat_bits.h"
 #include "uart_pl011.h"
@@ -92,6 +93,7 @@ static char proc_state_char(proc_state_t st) {
         case PROC_WAITING: return 'W';
         case PROC_ZOMBIE: return 'Z';
         case PROC_SLEEPING: return 'S';
+        case PROC_BLOCKED_IO: return 'B';
         case PROC_UNUSED: return 'U';
         default: return '?';
     }
@@ -707,7 +709,7 @@ uint64_t sys_close(uint64_t fd) {
     return 0;
 }
 
-uint64_t sys_read(uint64_t fd, uint64_t buf_user, uint64_t len) {
+uint64_t sys_read(trap_frame_t *tf, uint64_t fd, uint64_t buf_user, uint64_t len, uint64_t elr) {
     proc_t *cur = &g_procs[g_cur_proc];
     int didx = fd_get_desc_idx(&cur->fdt, fd);
     if (didx < 0) {
@@ -722,14 +724,54 @@ uint64_t sys_read(uint64_t fd, uint64_t buf_user, uint64_t len) {
     if (d->kind == FDESC_UART) {
         volatile char *dst = (volatile char *)(uintptr_t)buf_user;
 
-        /* Block for the first byte, then drain any immediately available bytes. */
-        char c = console_in_getc_blocking();
+        char c;
+
+retry_first_byte:
+        /* Try to get one byte without blocking. */
+        if (!console_in_try_getc(&c)) {
+            /* True blocking read: park the task until input arrives. */
+            tf_copy(&cur->tf, tf);
+            cur->elr = elr;
+
+            cur->pending_console_read = 1;
+            cur->pending_read_fd = fd;
+            cur->pending_read_buf_user = buf_user;
+            cur->pending_read_len = len;
+
+            cur->state = PROC_BLOCKED_IO;
+
+            int next = sched_pick_next_runnable();
+            if (next >= 0 && next != g_cur_proc) {
+                proc_switch_to(next, tf);
+                return SYSCALL_SWITCHED;
+            }
+
+            /* No other runnable tasks; sched_pick_next_runnable may have idled
+             * until input arrived and made us runnable again.
+             */
+            if (cur->state == PROC_BLOCKED_IO) {
+                cur->state = PROC_RUNNABLE;
+            }
+            goto retry_first_byte;
+        }
+
+        /* If we had parked in this syscall (no other runnable tasks), clear the
+         * pending read bookkeeping now that we're completing it inline.
+         */
+        if (cur->pending_console_read) {
+            cur->pending_console_read = 0;
+            cur->pending_read_fd = 0;
+            cur->pending_read_buf_user = 0;
+            cur->pending_read_len = 0;
+        }
+
         dst[0] = c;
 
+        /* Drain any buffered bytes without extra polling. */
         uint64_t n = 1;
         for (; n < len; n++) {
             char t;
-            if (!console_in_try_getc(&t)) break;
+            if (!console_in_pop(&t)) break;
             dst[n] = t;
         }
         return n;

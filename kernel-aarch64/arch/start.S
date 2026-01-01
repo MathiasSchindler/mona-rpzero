@@ -86,5 +86,5 @@ el1_entry:
 .section .bss
 .align 16
 __stack:
-    .skip 0x4000
+    .skip 0x10000
 __stack_top:

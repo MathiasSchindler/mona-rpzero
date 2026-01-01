@@ -33,8 +33,10 @@ OBJS := \
 	$(BUILD)/arch/start.o \
 	$(BUILD)/arch/exceptions.o \
 	$(BUILD)/arch/enter_el0.o \
+	$(BUILD)/arch/irq_regtest.o \
 	$(BUILD)/main.o \
 	$(BUILD)/exceptions.o \
+	$(BUILD)/irq.o \
 	$(BUILD)/klog.o \
 	$(BUILD)/console_in.o \
 	$(BUILD)/usb_kbd.o \
@@ -93,6 +95,9 @@ $(BUILD)/arch/exceptions.o: arch/exceptions.S $(CONFIG_STAMP) | $(BUILD)
 $(BUILD)/arch/enter_el0.o: arch/enter_el0.S $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(BUILD)/arch/irq_regtest.o: arch/irq_regtest.S $(CONFIG_STAMP) | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
 $(BUILD)/main.o: main.c include/uart_pl011.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -128,7 +133,10 @@ $(BUILD)/initramfs.o: initramfs.c include/initramfs.h include/cpio_newc.h $(CONF
 	$(CC) $(CFLAGS) -c $< -o $@
 
 
-$(BUILD)/exceptions.o: exceptions.c include/exceptions.h include/errno.h include/syscalls.h include/proc.h include/sched.h include/uart_pl011.h $(CONFIG_STAMP) | $(BUILD)
+$(BUILD)/exceptions.o: exceptions.c include/exceptions.h include/errno.h include/syscalls.h include/proc.h include/sched.h include/uart_pl011.h include/irq.h $(CONFIG_STAMP) | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/irq.o: irq.c include/irq.h include/time.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/time.o: time.c include/time.h $(CONFIG_STAMP) | $(BUILD)
@@ -164,7 +172,7 @@ $(BUILD)/sys_proc.o: sys_proc.c include/syscalls.h include/sys_util.h include/er
 $(BUILD)/proc.o: proc.c include/proc.h include/fd.h include/pipe.h include/vfs.h include/mmu.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/sched.o: sched.c include/sched.h include/proc.h include/regs.h include/mmu.h $(CONFIG_STAMP) | $(BUILD)
+$(BUILD)/sched.o: sched.c include/sched.h include/proc.h include/regs.h include/mmu.h include/console_in.h include/irq.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/vfs.o: vfs.c include/vfs.h include/initramfs.h $(CONFIG_STAMP) | $(BUILD)

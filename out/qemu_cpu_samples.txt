@@ -1,0 +1,6 @@
+qemu pid=32468
+  32468  0.9 00:00:00 qemu-system-aarch64 -M raspi3b -cpu cortex-a53 -m 1024 -semihosting -kernel kernel-aarch64/build/kernel8.img -dtb archive/bcm2710-rpi-zero-2-w.dtb -nographic
+  32468  0.6 00:00:00 qemu-system-aarch64 -M raspi3b -cpu cortex-a53 -m 1024 -semihosting -kernel kernel-aarch64/build/kernel8.img -dtb archive/bcm2710-rpi-zero-2-w.dtb -nographic
+  32468  0.4 00:00:00 qemu-system-aarch64 -M raspi3b -cpu cortex-a53 -m 1024 -semihosting -kernel kernel-aarch64/build/kernel8.img -dtb archive/bcm2710-rpi-zero-2-w.dtb -nographic
+  32468  0.3 00:00:00 qemu-system-aarch64 -M raspi3b -cpu cortex-a53 -m 1024 -semihosting -kernel kernel-aarch64/build/kernel8.img -dtb archive/bcm2710-rpi-zero-2-w.dtb -nographic
+  32468  0.3 00:00:00 qemu-system-aarch64 -M raspi3b -cpu cortex-a53 -m 1024 -semihosting -kernel kernel-aarch64/build/kernel8.img -dtb archive/bcm2710-rpi-zero-2-w.dtb -nographic

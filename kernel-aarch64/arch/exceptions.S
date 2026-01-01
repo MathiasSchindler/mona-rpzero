@@ -86,7 +86,7 @@ _exc_fiq_el1t:    mov x16, #EXC_FIQ_EL1T;    b _exc_common
 _exc_serr_el1t:   mov x16, #EXC_SERR_EL1T;   b _exc_common
 
 _exc_sync_el1h:   mov x16, #EXC_SYNC_EL1H;   b _exc_common
-_exc_irq_el1h:    mov x16, #EXC_IRQ_EL1H;    b _exc_common
+_exc_irq_el1h:    b _exc_common_irq_el1h
 _exc_fiq_el1h:    mov x16, #EXC_FIQ_EL1H;    b _exc_common
 _exc_serr_el1h:   mov x16, #EXC_SERR_EL1H;   b _exc_common
 
@@ -102,6 +102,7 @@ _exc_serr_el0_32: mov x16, #EXC_SERR_EL0_32; b _exc_common
 
 .extern exception_report
 .extern exception_handle
+.extern proc_current_elr_value
 
 /*
  * Exception entry convention:
@@ -138,12 +139,25 @@ _exc_common:
     mrs x19, SP_EL0
     str x19, [sp, #248]
 
-    /* Fast path: SVC from EL0 AArch64 (kind=8, ESR.EC=0x15). */
+_exc_common_after_save:
+
+    /* Fast paths:
+     *  - SVC from EL0 AArch64 (kind=8, ESR.EC=0x15)
+     *  - IRQ while in EL1h (kind=5) so `wfi`-idle can return.
+     */
+    cmp x16, #EXC_IRQ_EL1H
+    b.eq 4f
+
     cmp x16, #EXC_SYNC_EL0_64
     b.ne 2f
     lsr x0, x20, #26
     cmp x0, #0x15
     b.ne 2f
+
+4:
+
+    /* Preserve kind across the C call. x16 is scratch and may be clobbered. */
+    mov x24, x16
 
     /* exception_handle(tf, kind, esr, elr, far, spsr) */
     mov x0, sp
@@ -157,6 +171,22 @@ _exc_common:
     /* x0==1 => return to interrupted context */
     cmp x0, #1
     b.ne 3f
+
+    /* If this was an EL0 SVC path, nested EL1 IRQs may have clobbered ELR_EL1.
+     * Reload the intended return ELR from the current process state.
+     */
+    cmp x24, #EXC_SYNC_EL0_64
+    b.ne 6f
+    bl  proc_current_elr_value
+    msr ELR_EL1, x0
+    /* Return to EL0t with DAIF masked (same policy as enter_el0). */
+    mov x1, #0x3c0
+    msr SPSR_EL1, x1
+6:
+
+    /* For EL1h IRQs, do not touch SP_EL0 on return. */
+    cmp x24, #EXC_IRQ_EL1H
+    b.eq 5f
 
     ldp x0,  x1,  [sp, #0]
     ldp x2,  x3,  [sp, #16]
@@ -181,6 +211,26 @@ _exc_common:
     add sp, sp, #256
     eret
 
+5:
+    ldp x0,  x1,  [sp, #0]
+    ldp x2,  x3,  [sp, #16]
+    ldp x4,  x5,  [sp, #32]
+    ldp x6,  x7,  [sp, #48]
+    ldp x8,  x9,  [sp, #64]
+    ldp x10, x11, [sp, #80]
+    ldp x12, x13, [sp, #96]
+    ldp x14, x15, [sp, #112]
+    ldp x16, x17, [sp, #128]
+    ldp x18, x19, [sp, #144]
+    ldp x20, x21, [sp, #160]
+    ldp x22, x23, [sp, #176]
+    ldp x24, x25, [sp, #192]
+    ldp x26, x27, [sp, #208]
+    ldp x28, x29, [sp, #224]
+    ldr x30, [sp, #240]
+    add sp, sp, #256
+    eret
+
 2:
     /* Report and halt. */
     mov x0, x16
@@ -188,6 +238,7 @@ _exc_common:
     mov x2, x21
     mov x3, x22
     mov x4, x23
+    mov x5, sp
     bl  exception_report
 
 3:
@@ -195,5 +246,44 @@ _exc_common:
 1:
     wfe
     b 1b
+
+/*
+ * IRQ-safe entry for EL1h: do not clobber any GPRs before saving.
+ *
+ * Our normal stubs write the exception kind into x16 before branching to
+ * _exc_common. That is fine for EL0 syscalls, but IRQs can interrupt kernel C
+ * code at arbitrary points, and x16 may hold live values.
+ */
+_exc_common_irq_el1h:
+    /* Reserve space for 31 GPRs + SP_EL0 (32 * 8 = 256). */
+    sub sp, sp, #256
+
+    stp x0,  x1,  [sp, #0]
+    stp x2,  x3,  [sp, #16]
+    stp x4,  x5,  [sp, #32]
+    stp x6,  x7,  [sp, #48]
+    stp x8,  x9,  [sp, #64]
+    stp x10, x11, [sp, #80]
+    stp x12, x13, [sp, #96]
+    stp x14, x15, [sp, #112]
+    stp x16, x17, [sp, #128]
+    stp x18, x19, [sp, #144]
+    stp x20, x21, [sp, #160]
+    stp x22, x23, [sp, #176]
+    stp x24, x25, [sp, #192]
+    stp x26, x27, [sp, #208]
+    stp x28, x29, [sp, #224]
+    str x30, [sp, #240]
+
+    mrs x20, ESR_EL1
+    mrs x21, ELR_EL1
+    mrs x22, FAR_EL1
+    mrs x23, SPSR_EL1
+    mrs x19, SP_EL0
+    str x19, [sp, #248]
+
+    /* Now that x16 is saved, load the kind ID. */
+    mov x16, #EXC_IRQ_EL1H
+    b _exc_common_after_save
 
 .size vectors, . - vectors

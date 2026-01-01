@@ -7,6 +7,7 @@
 #include "syscalls.h"
 #include "syscall_numbers.h"
 #include "uart_pl011.h"
+#include "irq.h"
 
 #define PROC_TRACE 0
 
@@ -52,7 +53,8 @@ void exception_report(uint64_t kind,
                       uint64_t esr,
                       uint64_t elr,
                       uint64_t far,
-                      uint64_t spsr) {
+                      uint64_t spsr,
+                      const trap_frame_t *tf) {
     uint64_t ec = (esr >> 26) & 0x3Full;
     uint64_t il = (esr >> 25) & 0x1ull;
     uint64_t iss = esr & 0x01FFFFFFull;
@@ -74,6 +76,47 @@ void exception_report(uint64_t kind,
     uart_write(" spsr=");
     uart_write_hex_u64(spsr);
 
+    /* Minimal debug context for kernel-mode data aborts. */
+    if (kind == 4 && ec == 0x25 && tf) {
+        uint64_t ttbr0;
+        __asm__ volatile("mrs %0, ttbr0_el1" : "=r"(ttbr0));
+
+        uart_write(" ttbr0=");
+        uart_write_hex_u64(ttbr0);
+        uart_write(" tf=");
+        uart_write_hex_u64((uint64_t)(uintptr_t)tf);
+        uart_write(" sp_el0=");
+        uart_write_hex_u64(tf->sp_el0);
+        uart_write(" x0=");
+        uart_write_hex_u64(tf->x[0]);
+        uart_write(" x1=");
+        uart_write_hex_u64(tf->x[1]);
+        uart_write(" x2=");
+        uart_write_hex_u64(tf->x[2]);
+        uart_write(" x16=");
+        uart_write_hex_u64(tf->x[16]);
+        uart_write(" x17=");
+        uart_write_hex_u64(tf->x[17]);
+        uart_write(" x19=");
+        uart_write_hex_u64(tf->x[19]);
+        uart_write(" x20=");
+        uart_write_hex_u64(tf->x[20]);
+        uart_write(" x21=");
+        uart_write_hex_u64(tf->x[21]);
+        uart_write(" x22=");
+        uart_write_hex_u64(tf->x[22]);
+        uart_write(" x23=");
+        uart_write_hex_u64(tf->x[23]);
+        uart_write(" x24=");
+        uart_write_hex_u64(tf->x[24]);
+        uart_write(" x25=");
+        uart_write_hex_u64(tf->x[25]);
+        uart_write(" x29=");
+        uart_write_hex_u64(tf->x[29]);
+        uart_write(" x30=");
+        uart_write_hex_u64(tf->x[30]);
+    }
+
     if (kind == 8 && elr >= USER_REGION_BASE && (elr + 4u) <= (USER_REGION_BASE + USER_REGION_SIZE)) {
         uint32_t insn = *(volatile uint32_t *)(uintptr_t)elr;
         uart_write(" insn=");
@@ -92,7 +135,13 @@ uint64_t exception_handle(trap_frame_t *tf,
     (void)far;
     (void)spsr;
 
-    /* Only support EL0 AArch64 sync (SVC) for now. */
+    /* IRQ in EL1h: used for wfi-based idle wakeups. */
+    if (kind == 5) {
+        irq_handle();
+        return 1;
+    }
+
+    /* Only support EL0 AArch64 sync (SVC) for syscalls. */
     if (kind != 8) {
         return 0;
     }
@@ -244,7 +293,12 @@ uint64_t exception_handle(trap_frame_t *tf,
             break;
 
         case __NR_read:
-            ret = sys_read(a0, a1, a2);
+            ret = sys_read(tf, a0, a1, a2, elr);
+            if (ret == SYSCALL_SWITCHED) {
+                /* sys_read already switched contexts. */
+                tf_copy(&g_procs[g_cur_proc].tf, tf);
+                return 1;
+            }
             break;
 
         case __NR_getdents64:

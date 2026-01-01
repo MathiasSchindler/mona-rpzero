@@ -9,6 +9,7 @@
 #include "fb.h"
 #include "termfb.h"
 #include "console_in.h"
+#include "irq.h"
 
 #ifdef ENABLE_USB_KBD
 #include "usb_kbd.h"
@@ -69,6 +70,17 @@ void kmain(unsigned long dtb_ptr) {
         pmm_init(info.mem_base, info.mem_size, ks, ke, (uint64_t)dtb_ptr);
 
         mmu_init_identity(info.mem_base, info.mem_size);
+
+        /* Enable periodic timer IRQs so the scheduler can truly idle with `wfi`. */
+        irq_init();
+
+    #ifdef DEBUG_IRQ_REGTEST
+        uart_write("irq: regtest...\n");
+        int irq_ok = irq_regtest();
+        uart_write("irq: regtest rc=");
+        uart_write_hex_u64((uint64_t)(uint32_t)irq_ok);
+        uart_write("\n");
+    #endif
 
     #ifdef ENABLE_FB
         /* Best-effort framebuffer bring-up (QEMU-first). */

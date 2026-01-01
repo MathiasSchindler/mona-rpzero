@@ -18,6 +18,10 @@ void tf_copy(trap_frame_t *dst, const trap_frame_t *src) {
     dst->sp_el0 = src->sp_el0;
 }
 
+uint64_t proc_current_elr_value(void) {
+    return g_procs[g_cur_proc].elr;
+}
+
 void tf_zero(trap_frame_t *tf) {
     for (uint64_t i = 0; i < 31; i++) {
         tf->x[i] = 0;
@@ -49,6 +53,10 @@ void proc_clear(proc_t *p) {
     p->wait_target_pid = 0;
     p->wait_status_user = 0;
     p->sleep_deadline_ns = 0;
+    p->pending_console_read = 0;
+    p->pending_read_buf_user = 0;
+    p->pending_read_len = 0;
+    p->pending_read_fd = 0;
     for (uint64_t i = 0; i < MAX_FDS; i++) {
         p->fdt.fd_to_desc[i] = -1;
     }

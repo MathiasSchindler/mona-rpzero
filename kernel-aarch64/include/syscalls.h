@@ -37,7 +37,7 @@ uint64_t sys_linkat(int64_t olddirfd, uint64_t oldpath_user, int64_t newdirfd, u
 uint64_t sys_unlinkat(int64_t dirfd, uint64_t pathname_user, uint64_t flags);
 uint64_t sys_close(uint64_t fd);
 uint64_t sys_pipe2(uint64_t pipefd_user, uint64_t flags);
-uint64_t sys_read(uint64_t fd, uint64_t buf_user, uint64_t len);
+uint64_t sys_read(trap_frame_t *tf, uint64_t fd, uint64_t buf_user, uint64_t len, uint64_t elr);
 uint64_t sys_getdents64(uint64_t fd, uint64_t dirp_user, uint64_t count);
 uint64_t sys_lseek(uint64_t fd, int64_t off, uint64_t whence);
 uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len);

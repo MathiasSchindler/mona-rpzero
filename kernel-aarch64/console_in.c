@@ -62,6 +62,14 @@ void console_in_poll(void) {
     /* Future: additional input backends enqueue into the same ring. */
 }
 
+int console_in_has_data(void) {
+    return g_r != g_w;
+}
+
+int console_in_pop(char *out) {
+    return ring_pop(out);
+}
+
 int console_in_try_getc(char *out) {
     console_in_poll();
     return ring_pop(out);

@@ -22,6 +22,7 @@ typedef enum {
     PROC_WAITING = 2,
     PROC_ZOMBIE = 3,
     PROC_SLEEPING = 4,
+    PROC_BLOCKED_IO = 5,
 } proc_state_t;
 
 typedef struct {
@@ -44,6 +45,12 @@ typedef struct {
     int64_t wait_target_pid;
     uint64_t wait_status_user;
     uint64_t sleep_deadline_ns;
+
+    /* Pending blocking IO (currently only stdin/console). */
+    uint8_t pending_console_read;
+    uint64_t pending_read_buf_user;
+    uint64_t pending_read_len;
+    uint64_t pending_read_fd;
     fd_table_t fdt;
 } proc_t;
 
@@ -63,3 +70,6 @@ void proc_clear(proc_t *p);
 void proc_close_all_fds(proc_t *p);
 void proc_init_if_needed(uint64_t elr, trap_frame_t *tf);
 int proc_find_free_slot(void);
+
+/* Used by exception entry code: nested EL1 interrupts can clobber ELR_EL1. */
+uint64_t proc_current_elr_value(void);
