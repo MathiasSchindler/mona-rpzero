@@ -211,6 +211,32 @@ int main(int argc, char **argv, char **envp) {
         }
     }
 
+    /* Tool smoke test: env -i prints nothing. */
+    {
+        char out[256];
+        const char *const env_argv[] = {"env", "-i", 0};
+        if (run_capture("/bin/env", env_argv, out, sizeof(out)) != 0) {
+            sys_puts("[kinit] env capture failed\n");
+            failed |= 1;
+        } else if (cstr_len_u64_local(out) != 0) {
+            sys_puts("[kinit] env -i output unexpected\n");
+            failed |= 1;
+        }
+    }
+
+    /* Tool smoke test: dirname /bin/sh => /bin. */
+    {
+        char out[256];
+        const char *const dn_argv[] = {"dirname", "/bin/sh", 0};
+        if (run_capture("/bin/dirname", dn_argv, out, sizeof(out)) != 0) {
+            sys_puts("[kinit] dirname capture failed\n");
+            failed |= 1;
+        } else if (!mem_contains(out, cstr_len_u64_local(out), "/bin\n")) {
+            sys_puts("[kinit] dirname output unexpected\n");
+            failed |= 1;
+        }
+    }
+
     /* Phase-8 smoke test: process identity. */
     {
         const char *const test_argv[] = {"pid", 0};

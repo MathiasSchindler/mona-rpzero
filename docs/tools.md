@@ -37,7 +37,8 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | readlink | Partial | 1 |
 | tr | Partial | 5 |
 | bpe | Planned | 0 |
-| env | Planned | 0 |
+| env | Partial | 4 |
+| dirname | Partial | 3 |
 | rev | Partial | 2 |
 | true | Done | 1 |
 | expr | Planned | 0 |
@@ -100,7 +101,6 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | printf | Partial | 4 |
 | tee | Partial | 3 |
 | yes | Planned | 0 |
-| dirname | Planned | 0 |
 | kill | Done | 3 |
 | ps | Done | 2 |
 | test | Planned | 0 |
