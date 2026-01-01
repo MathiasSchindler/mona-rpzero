@@ -46,6 +46,14 @@ static void usage(void) {
     sys_puts("usage: time COMMAND [ARG...]\n");
 }
 
+static int contains_slash(const char *s) {
+    if (!s) return 0;
+    for (uint64_t i = 0; s[i] != '\0'; i++) {
+        if (s[i] == '/') return 1;
+    }
+    return 0;
+}
+
 int main(int argc, char **argv, char **envp) {
     (void)envp;
 
@@ -60,7 +68,38 @@ int main(int argc, char **argv, char **envp) {
 
     int64_t pid = (int64_t)sys_fork();
     if (pid == 0) {
-        (void)sys_execve(argv[1], (const char *const *)&argv[1], 0);
+        /* execve(2) does not search PATH; match our shell behavior (/bin/<cmd>). */
+        const char *cmd = argv[1];
+        char path[128];
+        if (!cmd) {
+            sys_puts("time: execve failed\n");
+            sys_exit_group(127);
+        }
+
+        if (cmd[0] == '/' || contains_slash(cmd)) {
+            /* Absolute or explicit relative path (./foo, dir/foo, etc.) */
+            uint64_t i = 0;
+            while (cmd[i] && i + 1 < (uint64_t)sizeof(path)) {
+                path[i] = cmd[i];
+                i++;
+            }
+            path[i] = '\0';
+        } else {
+            /* /bin/<cmd> */
+            const char *pre = "/bin/";
+            uint64_t i = 0;
+            while (pre[i] && i + 1 < (uint64_t)sizeof(path)) {
+                path[i] = pre[i];
+                i++;
+            }
+            uint64_t j = 0;
+            while (cmd[j] && i + 1 < (uint64_t)sizeof(path)) {
+                path[i++] = cmd[j++];
+            }
+            path[i] = '\0';
+        }
+
+        (void)sys_execve(path, (const char *const *)&argv[1], 0);
         sys_puts("time: execve failed\n");
         sys_exit_group(127);
     }

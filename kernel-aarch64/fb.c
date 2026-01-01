@@ -169,10 +169,16 @@ int fb_init_from_mailbox_ex(uint32_t phys_w, uint32_t phys_h,
     /* Prevent the allocator from handing out framebuffer RAM. */
     pmm_reserve_range(g_fb.phys_addr, g_fb.phys_addr + (uint64_t)g_fb.size_bytes);
 
-    /* Map framebuffer as device (non-cacheable) to avoid cache coherency issues initially. */
+    /*
+     * Memory type for the framebuffer:
+     * - On real hardware, mapping it as DEVICE avoids cache coherency issues (we don't clean caches on every draw).
+     * - Under QEMU, DEVICE mappings are extremely slow for per-pixel text rendering; keep it NORMAL for speed.
+     */
+#ifndef QEMU_SEMIHOSTING
     if (mmu_mark_region_device(g_fb.phys_addr, (uint64_t)g_fb.size_bytes) != 0) {
         uart_write("fb: warning: failed to mark fb region as device\n");
     }
+#endif
 
     /* Access via higher-half mapping (same shared L2 table). */
     g_fb.virt = (void *)(uintptr_t)(KERNEL_VA_BASE + g_fb.phys_addr);
