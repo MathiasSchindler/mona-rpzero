@@ -189,6 +189,12 @@ int main(int argc, char **argv, char **envp) {
         failed |= run_test("/bin/sh -c \"/bin/echo hello | /bin/cat\"", "/bin/sh", test_argv);
     }
 
+    /* Tool smoke test: printf + escapes + pipeline into sort. */
+    {
+        const char *const test_argv[] = {"sh", "-c", "/bin/printf \"b\\na\\n\" | /bin/sort", 0};
+        failed |= run_test("/bin/sh -c \"/bin/printf ... | /bin/sort\"", "/bin/sh", test_argv);
+    }
+
     /* Phase-8 smoke test: process identity. */
     {
         const char *const test_argv[] = {"pid", 0};

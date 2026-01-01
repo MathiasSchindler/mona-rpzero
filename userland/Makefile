@@ -45,7 +45,7 @@ USER_BASE ?= 0x0000000000400000
 
 .PHONY: all clean check-toolchain check-nolibc initramfs
 
-all: check-nolibc $(BUILD)/echo.bin $(BUILD)/true.bin $(BUILD)/false.bin $(BUILD)/cat.bin $(BUILD)/ls.bin $(BUILD)/pwd.bin $(BUILD)/pid.bin $(BUILD)/uname.bin $(BUILD)/mkdir.bin $(BUILD)/touch.bin $(BUILD)/rm.bin $(BUILD)/rmdir.bin $(BUILD)/seq.bin $(BUILD)/uniq.bin $(BUILD)/wc.bin $(BUILD)/grep.bin $(BUILD)/ps.bin $(BUILD)/kill.bin $(BUILD)/pstree.bin $(BUILD)/find.bin $(BUILD)/awk.bin $(BUILD)/basename.bin $(BUILD)/du.bin $(BUILD)/ln.bin $(BUILD)/tr.bin $(BUILD)/sed.bin $(BUILD)/head.bin $(BUILD)/tail.bin $(BUILD)/sort.bin $(BUILD)/time.bin $(BUILD)/dmesg.bin $(BUILD)/readelf.bin $(BUILD)/readlink.bin $(BUILD)/brk.bin $(BUILD)/mmap.bin $(BUILD)/cwd.bin $(BUILD)/tty.bin $(BUILD)/sleep.bin $(BUILD)/date.bin $(BUILD)/uptime.bin $(BUILD)/compat.bin $(BUILD)/kinit.bin $(BUILD)/sh.bin $(BUILD)/init.bin
+all: check-nolibc $(BUILD)/echo.bin $(BUILD)/true.bin $(BUILD)/false.bin $(BUILD)/cat.bin $(BUILD)/ls.bin $(BUILD)/pwd.bin $(BUILD)/pid.bin $(BUILD)/uname.bin $(BUILD)/mkdir.bin $(BUILD)/touch.bin $(BUILD)/rm.bin $(BUILD)/rmdir.bin $(BUILD)/seq.bin $(BUILD)/uniq.bin $(BUILD)/wc.bin $(BUILD)/grep.bin $(BUILD)/ps.bin $(BUILD)/kill.bin $(BUILD)/pstree.bin $(BUILD)/find.bin $(BUILD)/awk.bin $(BUILD)/basename.bin $(BUILD)/du.bin $(BUILD)/ln.bin $(BUILD)/tr.bin $(BUILD)/sed.bin $(BUILD)/head.bin $(BUILD)/tail.bin $(BUILD)/sort.bin $(BUILD)/printf.bin $(BUILD)/time.bin $(BUILD)/dmesg.bin $(BUILD)/readelf.bin $(BUILD)/readlink.bin $(BUILD)/brk.bin $(BUILD)/mmap.bin $(BUILD)/cwd.bin $(BUILD)/tty.bin $(BUILD)/sleep.bin $(BUILD)/date.bin $(BUILD)/uptime.bin $(BUILD)/compat.bin $(BUILD)/kinit.bin $(BUILD)/sh.bin $(BUILD)/init.bin
 
 initramfs: $(BUILD)/initramfs.cpio
 
@@ -62,7 +62,7 @@ check-nolibc:
 		echo "$$bad_headers" >&2; \
 		exit 2; \
 	fi
-	@bad_syms=$$(grep -RInE --include='*.c' --include='*.h' '\\b(printf|fprintf|snprintf|vprintf|vsnprintf|malloc|free|calloc|realloc|strdup|getenv|system|popen)\\b' . || true); \
+	@bad_syms=$$(grep -RInE --include='*.c' --include='*.h' '(^|[^[:alnum:]_])(printf|fprintf|snprintf|vprintf|vsnprintf|malloc|free|calloc|realloc|strdup|getenv|system|popen)[[:space:]]*[(]' . || true); \
 	if [[ -n "$$bad_syms" ]]; then \
 		echo "Forbidden libc-like APIs detected (use raw syscalls / tiny helpers instead):" >&2; \
 		echo "$$bad_syms" >&2; \
@@ -154,6 +154,9 @@ $(BUILD)/tail.o: src/tail.c include/syscall.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/sort.o: src/sort.c include/syscall.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/printf.o: src/printf.c include/syscall.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/time.o: src/time.c include/syscall.h | $(BUILD)
@@ -313,6 +316,10 @@ $(BUILD)/sort.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(B
 	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
 	$(POSTLINK)
 
+$(BUILD)/printf.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/printf.o | check-toolchain
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
+
 $(BUILD)/time.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/time.o | check-toolchain
 	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
 	$(POSTLINK)
@@ -464,6 +471,9 @@ $(BUILD)/tail.bin: $(BUILD)/tail.elf | check-toolchain
 $(BUILD)/sort.bin: $(BUILD)/sort.elf | check-toolchain
 	$(OBJCOPY) -O binary $< $@
 
+$(BUILD)/printf.bin: $(BUILD)/printf.elf | check-toolchain
+	$(OBJCOPY) -O binary $< $@
+
 $(BUILD)/time.bin: $(BUILD)/time.elf | check-toolchain
 	$(OBJCOPY) -O binary $< $@
 
@@ -552,6 +562,7 @@ $(BUILD)/initramfs.cpio: $(TOOLS_DIR)/mkcpio_newc.py all | $(BUILD)
 	@cp "$(BUILD)/head.elf"  "$(INITRAMFS_ROOT)/bin/head"
 	@cp "$(BUILD)/tail.elf"  "$(INITRAMFS_ROOT)/bin/tail"
 	@cp "$(BUILD)/sort.elf"  "$(INITRAMFS_ROOT)/bin/sort"
+	@cp "$(BUILD)/printf.elf"  "$(INITRAMFS_ROOT)/bin/printf"
 	@cp "$(BUILD)/time.elf"  "$(INITRAMFS_ROOT)/bin/time"
 	@cp "$(BUILD)/dmesg.elf"  "$(INITRAMFS_ROOT)/bin/dmesg"
 	@cp "$(BUILD)/readelf.elf"  "$(INITRAMFS_ROOT)/bin/readelf"

@@ -97,7 +97,7 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | xxd | Planned | 0 |
 | diff | Planned | 0 |
 | init | Partial | 1 |
-| printf | Planned | 0 |
+| printf | Partial | 4 |
 | tee | Planned | 0 |
 | yes | Planned | 0 |
 | dirname | Planned | 0 |
