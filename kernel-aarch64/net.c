@@ -78,6 +78,15 @@ int netif_register(netif_t *nif) {
     return 0;
 }
 
+uint32_t netif_count(void) {
+    return g_net.iface_count;
+}
+
+netif_t *netif_get(uint32_t idx) {
+    if (idx >= g_net.iface_count) return 0;
+    return g_net.ifaces[idx];
+}
+
 void netif_rx_frame(netif_t *nif, const uint8_t *frame, size_t len) {
     if (!nif || !frame || len == 0) return;
 

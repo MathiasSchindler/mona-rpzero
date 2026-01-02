@@ -47,6 +47,10 @@ void net_init(void);
 /* Register a netif with the stack. Returns 0 on success. */
 int netif_register(netif_t *nif);
 
+/* Introspection helpers (primarily for procfs/debug). */
+uint32_t netif_count(void);
+netif_t *netif_get(uint32_t idx);
+
 /* Inject a received Ethernet frame into the stack (driver calls this). */
 void netif_rx_frame(netif_t *nif, const uint8_t *frame, size_t len);
 

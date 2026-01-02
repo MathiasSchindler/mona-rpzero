@@ -11,6 +11,7 @@
 #include "stat_bits.h"
 #include "uart_pl011.h"
 #include "console_in.h"
+#include "net.h"
 #include "vfs.h"
 
 #define AT_FDCWD ((int64_t)-100)
@@ -133,6 +134,23 @@ static void buf_put_u64(char *buf, uint64_t cap, uint64_t *pos, uint64_t v) {
     }
     while (t > 0) {
         buf_putc(buf, cap, pos, tmp[--t]);
+    }
+}
+
+static void buf_put_hex_u8(char *buf, uint64_t cap, uint64_t *pos, uint8_t v) {
+    static const char *hex = "0123456789abcdef";
+    buf_putc(buf, cap, pos, hex[(v >> 4) & 0xFu]);
+    buf_putc(buf, cap, pos, hex[v & 0xFu]);
+}
+
+static void buf_put_mac(char *buf, uint64_t cap, uint64_t *pos, const uint8_t mac[6]) {
+    if (!mac) {
+        buf_puts(buf, cap, pos, "00:00:00:00:00:00");
+        return;
+    }
+    for (int i = 0; i < 6; i++) {
+        if (i) buf_putc(buf, cap, pos, ':');
+        buf_put_hex_u8(buf, cap, pos, mac[i]);
     }
 }
 
@@ -498,7 +516,7 @@ uint64_t sys_openat(int64_t dirfd, uint64_t pathname_user, uint64_t flags, uint6
         return (uint64_t)(-(int64_t)EINVAL);
     }
 
-    /* Minimal procfs: /proc (dir), /proc/ps and /proc/meminfo (files). */
+    /* Minimal procfs: /proc (dir), /proc/ps, /proc/meminfo, /proc/net (files). */
     if (cstr_eq_u64(path, "/proc") || cstr_eq_u64(path, "/proc/")) {
         uint64_t acc = flags & (uint64_t)O_ACCMODE;
         if (acc != (uint64_t)O_RDONLY) {
@@ -564,6 +582,31 @@ uint64_t sys_openat(int64_t dirfd, uint64_t pathname_user, uint64_t flags, uint6
         d->kind = FDESC_PROC;
         d->refs = 1;
         d->u.proc.node = 3u;
+        d->u.proc.off = 0;
+
+        int fd = fd_alloc_into(&cur->fdt, 3, didx);
+        desc_decref(didx);
+        if (fd < 0) {
+            return (uint64_t)(-(int64_t)EMFILE);
+        }
+        return (uint64_t)fd;
+    }
+
+    if (cstr_eq_u64(path, "/proc/net")) {
+        uint64_t acc = flags & (uint64_t)O_ACCMODE;
+        if (acc != (uint64_t)O_RDONLY) {
+            return (uint64_t)(-(int64_t)EROFS);
+        }
+
+        int didx = desc_alloc();
+        if (didx < 0) {
+            return (uint64_t)(-(int64_t)EMFILE);
+        }
+        file_desc_t *d = &g_descs[didx];
+        desc_clear(d);
+        d->kind = FDESC_PROC;
+        d->refs = 1;
+        d->u.proc.node = 4u;
         d->u.proc.off = 0;
 
         int fd = fd_alloc_into(&cur->fdt, 3, didx);
@@ -905,6 +948,48 @@ retry_first_byte:
         return n;
     }
 
+    if (d->kind == FDESC_PROC && d->u.proc.node == 4u) {
+        /* /proc/net: simple interface/stats snapshot. */
+        char out[1024];
+        uint64_t pos = 0;
+
+        buf_puts(out, sizeof(out), &pos, "iface\tmtu\tmac\trx_frames\trx_drops\ttx_frames\ttx_drops\n");
+
+        uint32_t nifs = netif_count();
+        for (uint32_t i = 0; i < nifs; i++) {
+            netif_t *nif = netif_get(i);
+            if (!nif) continue;
+
+            buf_puts(out, sizeof(out), &pos, nif->name);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_u64(out, sizeof(out), &pos, (uint64_t)nif->mtu);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_mac(out, sizeof(out), &pos, nif->mac);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_u64(out, sizeof(out), &pos, nif->rx_frames);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_u64(out, sizeof(out), &pos, nif->rx_drops);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_u64(out, sizeof(out), &pos, nif->tx_frames);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_u64(out, sizeof(out), &pos, nif->tx_drops);
+            buf_putc(out, sizeof(out), &pos, '\n');
+        }
+
+        if (pos < sizeof(out)) out[pos] = '\0';
+
+        if (d->u.proc.off >= pos) return 0;
+        uint64_t remain = pos - d->u.proc.off;
+        uint64_t n = (len < remain) ? len : remain;
+        volatile uint8_t *dst = (volatile uint8_t *)(uintptr_t)buf_user;
+        const uint8_t *src = (const uint8_t *)out + d->u.proc.off;
+        for (uint64_t i = 0; i < n; i++) {
+            dst[i] = src[i];
+        }
+        d->u.proc.off += n;
+        return n;
+    }
+
     if (d->kind != FDESC_INITRAMFS) {
         return (uint64_t)(-(int64_t)EBADF);
     }
@@ -1069,6 +1154,7 @@ uint64_t sys_getdents64(uint64_t fd, uint64_t dirp_user, uint64_t count) {
         (void)dents_emit_cb("..", S_IFDIR, &dc);
         (void)dents_emit_cb("ps", S_IFREG, &dc);
         (void)dents_emit_cb("meminfo", S_IFREG, &dc);
+        (void)dents_emit_cb("net", S_IFREG, &dc);
 
         if (dc.emitted > dc.skip) {
             d->u.proc.off = dc.emitted;
@@ -1338,6 +1424,13 @@ uint64_t sys_newfstatat(int64_t dirfd, uint64_t pathname_user, uint64_t statbuf_
         st->st_size = 0;
         return 0;
     }
+    if (cstr_eq_u64(path, "/proc/net")) {
+        linux_stat_t *st = (linux_stat_t *)(uintptr_t)statbuf_user;
+        st->st_mode = S_IFREG | 0444u;
+        st->st_nlink = 1;
+        st->st_size = 0;
+        return 0;
+    }
 
     const uint8_t *data = 0;
     uint64_t size = 0;
@@ -1398,7 +1491,7 @@ uint64_t sys_fchmodat(int64_t dirfd, uint64_t pathname_user, uint64_t mode, uint
 
     /* procfs is read-only. */
     if (cstr_eq_u64(path, "/proc") || cstr_eq_u64(path, "/proc/") || cstr_eq_u64(path, "/proc/ps") ||
-        cstr_eq_u64(path, "/proc/meminfo")) {
+        cstr_eq_u64(path, "/proc/meminfo") || cstr_eq_u64(path, "/proc/net")) {
         return (uint64_t)(-(int64_t)EROFS);
     }
 
