@@ -80,7 +80,7 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | cp | Partial | 4 |
 | head | Partial | 4 |
 | stat | Partial | 2 |
-| whoami | Planned | 0 |
+| whoami | Partial | 1 |
 | cpio | Planned | 0 |
 | hexdump | Planned | 0 |
 | objdump | Planned | 0 |
@@ -94,7 +94,7 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | tar | Planned | 0 |
 | xargs | Planned | 0 |
 | df | Planned | 0 |
-| id | Planned | 0 |
+| id | Partial | 3 |
 | xxd | Planned | 0 |
 | diff | Partial | 5 |
 | init | Partial | 1 |

@@ -846,6 +846,46 @@ int main(int argc, char **argv, char **envp) {
         }
     }
 
+    /* Tool smoke tests: id / whoami / free. */
+    {
+        char out[256];
+
+        const char *const id_argv[] = {"id", 0};
+        if (run_capture("/bin/id", id_argv, out, sizeof(out)) != 0) {
+            sys_puts("[kinit] id capture failed\n");
+            failed |= 1;
+        } else {
+            if (!mem_contains(out, cstr_len_u64_local(out), "uid=") ||
+                !mem_contains(out, cstr_len_u64_local(out), "gid=")) {
+                sys_puts("[kinit] id output unexpected\n");
+                failed |= 1;
+            }
+        }
+
+        const char *const whoami_argv[] = {"whoami", 0};
+        if (run_capture("/bin/whoami", whoami_argv, out, sizeof(out)) != 0) {
+            sys_puts("[kinit] whoami capture failed\n");
+            failed |= 1;
+        } else {
+            /* In this kernel uid 0 maps to "root". */
+            if (!mem_contains(out, cstr_len_u64_local(out), "root")) {
+                sys_puts("[kinit] whoami output unexpected\n");
+                failed |= 1;
+            }
+        }
+
+        const char *const free_argv[] = {"free", 0};
+        if (run_capture("/bin/free", free_argv, out, sizeof(out)) != 0) {
+            sys_puts("[kinit] free capture failed\n");
+            failed |= 1;
+        } else {
+            if (!mem_contains(out, cstr_len_u64_local(out), "Mem:")) {
+                sys_puts("[kinit] free output unexpected\n");
+                failed |= 1;
+            }
+        }
+    }
+
     {
         const char *const test_argv[] = {"compat", 0};
         failed |= run_test("/bin/compat", "/bin/compat", test_argv);
