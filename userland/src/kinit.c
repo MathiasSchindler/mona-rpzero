@@ -679,6 +679,60 @@ int main(int argc, char **argv, char **envp) {
         }
     }
 
+    /* Tool smoke test: objdump -h. */
+    {
+        char out[1024];
+        const char *const odump_argv[] = {"objdump", "-h", "/bin/sh", 0};
+        if (run_capture("/bin/objdump", odump_argv, out, sizeof(out)) != 0) {
+            sys_puts("[kinit] objdump capture failed\n");
+            failed |= 1;
+        } else if (!mem_contains(out, cstr_len_u64_local(out), "Sections:")) {
+            sys_puts("[kinit] objdump output unexpected\n");
+            failed |= 1;
+        }
+    }
+
+    /* Tool smoke test: xxd/hexdump (canonical hex output). */
+    {
+        char out[512];
+        const char *const xxd_argv[] = {"xxd", "/uniq.txt", 0};
+        if (run_capture("/bin/xxd", xxd_argv, out, sizeof(out)) != 0) {
+            sys_puts("[kinit] xxd capture failed\n");
+            failed |= 1;
+        } else if (!mem_contains(out, cstr_len_u64_local(out), "00000000")) {
+            sys_puts("[kinit] xxd output unexpected\n");
+            failed |= 1;
+        }
+
+        const char *const hd_argv[] = {"hexdump", "-C", "/uniq.txt", 0};
+        if (run_capture("/bin/hexdump", hd_argv, out, sizeof(out)) != 0) {
+            sys_puts("[kinit] hexdump capture failed\n");
+            failed |= 1;
+        } else if (!mem_contains(out, cstr_len_u64_local(out), "00000000")) {
+            sys_puts("[kinit] hexdump output unexpected\n");
+            failed |= 1;
+        }
+    }
+
+    /* Tool smoke test: test -e on a known file. */
+    {
+        const char *const test_argv[] = {"test", "-e", "/uniq.txt", 0};
+        failed |= run_test("/bin/test -e /uniq.txt", "/bin/test", test_argv);
+    }
+
+    /* Tool smoke test: xargs basic pipe. */
+    {
+        char out[256];
+        const char *const xa_argv[] = {"sh", "-c", "/bin/printf \"a b\\n\" | /bin/xargs /bin/echo", 0};
+        if (run_capture("/bin/sh", xa_argv, out, sizeof(out)) != 0) {
+            sys_puts("[kinit] xargs capture failed\n");
+            failed |= 1;
+        } else if (!mem_contains(out, cstr_len_u64_local(out), "a b")) {
+            sys_puts("[kinit] xargs output unexpected\n");
+            failed |= 1;
+        }
+    }
+
     /* Tool smoke test: pipeline into wc. */
     {
         const char *const test_argv[] = {"sh", "-c", "seq 1 10 | wc -l", 0};

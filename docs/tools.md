@@ -82,8 +82,8 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | stat | Partial | 2 |
 | whoami | Partial | 1 |
 | cpio | Planned | 0 |
-| hexdump | Planned | 0 |
-| objdump | Planned | 0 |
+| hexdump | Partial | 2 |
+| objdump | Partial | 2 |
 | strings | Planned | 0 |
 | cut | Partial | 5 |
 | od | Partial | 7 |
@@ -92,10 +92,10 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | hostname | Planned | 0 |
 | paste | Planned | 0 |
 | tar | Planned | 0 |
-| xargs | Planned | 0 |
+| xargs | Partial | 3 |
 | df | Planned | 0 |
 | id | Partial | 3 |
-| xxd | Planned | 0 |
+| xxd | Partial | 2 |
 | diff | Partial | 5 |
 | init | Partial | 1 |
 | printf | Partial | 4 |
@@ -103,7 +103,7 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | yes | Done | 1 |
 | kill | Done | 3 |
 | ps | Done | 2 |
-| test | Planned | 0 |
+| test | Partial | 5 |
 
 Notes on current “Partial” implementations:
 
