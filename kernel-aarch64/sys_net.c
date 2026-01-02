@@ -181,7 +181,25 @@ uint64_t sys_mona_udp6_recvfrom(trap_frame_t *tf,
         cur->state = PROC_BLOCKED_IO;
     }
 
+    /* Like ping6, ensure forward progress even if the system is otherwise idle.
+     * USB net RX is polled; without explicit polling here, a task blocked in
+     * recvfrom can time out even though the host replied.
+     */
+    uint64_t start_ns = time_now_ns();
+    uint64_t deadline_ns = cur->sleep_deadline_ns;
+    if (timeout_ms != 0) {
+        /* If time isn't available, we can't enforce a deadline; treat as blocking. */
+        if (start_ns == 0) deadline_ns = 0;
+    }
+
 retry_wait:
+    /* Pull in any pending USB net traffic before trying to sleep/yield.
+     * This reduces the chance of missing a fast DNS reply.
+     */
+#if defined(ENABLE_USB_KBD) || defined(ENABLE_USB_NET)
+    usb_poll();
+#endif
+
     int next = sched_pick_next_runnable();
     if (next >= 0 && next != g_cur_proc) {
         proc_switch_to(next, tf);
@@ -225,9 +243,9 @@ retry_wait:
     }
 
     if (trc == -(int)EAGAIN) {
-        if (cur->sleep_deadline_ns != 0) {
+        if (deadline_ns != 0) {
             uint64_t now = time_now_ns();
-            if (now >= cur->sleep_deadline_ns) {
+            if (now != 0 && now >= deadline_ns) {
                 cur->pending_udp6_recv = 0;
                 cur->pending_udp6_sock_id = 0;
                 cur->pending_udp6_fd = 0;

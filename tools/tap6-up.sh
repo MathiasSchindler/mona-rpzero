@@ -63,6 +63,15 @@ if ! ip -6 addr show dev "$IFNAME" scope link 2>/dev/null | grep -q "inet6 fe80:
 fi
 ip link set "$IFNAME" up
 
+# Detect WAN interface (interface with default route) to preserve RA acceptance
+WAN_IF_AUTO="$(ip -6 route show default 2>/dev/null | head -n1 | awk '{for(i=1;i<=NF;i++) if($i=="dev") {print $(i+1); exit}}')"
+
+if [[ -n "$WAN_IF_AUTO" ]]; then
+  # When forwarding is enabled, accept_ra must be 2 to accept RAs.
+  # We set this BEFORE enabling forwarding to avoid dropping the route.
+  sysctl -w "net.ipv6.conf.${WAN_IF_AUTO}.accept_ra=2" >/dev/null || true
+fi
+
 # Become an IPv6 router for the TAP network.
 sysctl -w net.ipv6.conf.all.forwarding=1 >/dev/null
 sysctl -w "net.ipv6.conf.${IFNAME}.accept_ra=0" >/dev/null || true

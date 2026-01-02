@@ -18,6 +18,8 @@
 #   SERIAL=stdio|vc|null  (default: stdio)
 #   MONITOR=none|stdio|vc (default: none)
 #   USB_KBD_DEBUG=0|1  (default: 0)  # enables extra kernel USB debug logs
+#   USB_NET_DEBUG=0|1  (default: 0)  # enables extra kernel USB-net debug logs
+#   IPV6_DEBUG_RX=0|1  (default: 0)  # enables chatty IPv6 RX debug logs
 #
 # Example:
 #   make run SERIAL=vc
@@ -77,6 +79,8 @@ SUDO ?= sudo
 SERIAL ?= stdio
 MONITOR ?= none
 USB_KBD_DEBUG ?= 0
+USB_NET_DEBUG ?= 0
+IPV6_DEBUG_RX ?= 0
 
 
 .PHONY: all run test test-net6 clean help
@@ -132,7 +136,9 @@ run: userland
 	fi; \
 	if [[ "$(USB_NET)" == "1" ]]; then \
 		kdefs+=" -DENABLE_USB_NET"; \
+		if [[ "$(USB_NET_DEBUG)" == "1" ]]; then kdefs+=" -DENABLE_USB_NET_DEBUG"; fi; \
 	fi; \
+	if [[ "$(IPV6_DEBUG_RX)" == "1" ]]; then kdefs+=" -DENABLE_IPV6_DEBUG_RX"; fi; \
 	$(MAKE) -C "$(AARCH64_DIR)" CROSS="$(AARCH64_CROSS)" USERPROG="$(USERPROG)" KERNEL_DEFS="$$kdefs" all
 	@args=( --kernel "$(AARCH64_IMG)" --dtb "$(DTB)" --mem "$(MEM)" ); \
 	if [[ "$(GFX)" == "1" ]]; then \
@@ -179,8 +185,11 @@ test-net6: userland
 		echo "Tried: $(DTB_CANDIDATES)" >&2; \
 		exit 2; \
 	fi
-	@# Build kernel with USB_NET enabled and run the dedicated net6 test payload.
-	@$(MAKE) -C "$(AARCH64_DIR)" CROSS="$(AARCH64_CROSS)" USERPROG=net6test KERNEL_DEFS="-DQEMU_SEMIHOSTING -DENABLE_USB_NET" all
+	@# Build kernel with USB_NET enabled (optionally with extra debug) and run the dedicated net6 test payload.
+	@kdefs="-DQEMU_SEMIHOSTING -DENABLE_USB_NET"; \
+	if [[ "$(USB_NET_DEBUG)" == "1" ]]; then kdefs+=" -DENABLE_USB_NET_DEBUG"; fi; \
+	if [[ "$(IPV6_DEBUG_RX)" == "1" ]]; then kdefs+=" -DENABLE_IPV6_DEBUG_RX"; fi; \
+	$(MAKE) -C "$(AARCH64_DIR)" CROSS="$(AARCH64_CROSS)" USERPROG=net6test KERNEL_DEFS="$$kdefs" all
 	@DTB="$(DTB)" MEM="$(MEM)" KERNEL_IMG="$(AARCH64_IMG)" TAP_IF="$(TAP_IF)" TEST_TIMEOUT_S="$(TEST_TIMEOUT_S)" tools/test-net6.sh "$(TAP_IF)"
 
 test-net6-hostping: userland
@@ -190,7 +199,10 @@ test-net6-hostping: userland
 		echo "Tried: $(DTB_CANDIDATES)" >&2; \
 		exit 2; \
 	fi
-	@$(MAKE) -C "$(AARCH64_DIR)" CROSS="$(AARCH64_CROSS)" USERPROG=net6test KERNEL_DEFS="-DQEMU_SEMIHOSTING -DENABLE_USB_NET" all
+	@kdefs="-DQEMU_SEMIHOSTING -DENABLE_USB_NET"; \
+	if [[ "$(USB_NET_DEBUG)" == "1" ]]; then kdefs+=" -DENABLE_USB_NET_DEBUG"; fi; \
+	if [[ "$(IPV6_DEBUG_RX)" == "1" ]]; then kdefs+=" -DENABLE_IPV6_DEBUG_RX"; fi; \
+	$(MAKE) -C "$(AARCH64_DIR)" CROSS="$(AARCH64_CROSS)" USERPROG=net6test KERNEL_DEFS="$$kdefs" all
 	@DTB="$(DTB)" MEM="$(MEM)" KERNEL_IMG="$(AARCH64_IMG)" TAP_IF="$(TAP_IF)" TEST_TIMEOUT_S="$(TEST_TIMEOUT_S)" tools/test-net6-hostping.sh "$(TAP_IF)"
 
 test-aarch64: userland

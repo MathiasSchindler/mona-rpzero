@@ -6,6 +6,12 @@
 #include "time.h"
 #include "uart_pl011.h"
 
+#ifdef ENABLE_IPV6_DEBUG_RX
+#define IPV6_DEBUG_RX 1
+#else
+#define IPV6_DEBUG_RX 0
+#endif
+
 /*
  * Minimal IPv6/ICMPv6/NDP implementation aimed at enabling a first ping6.
  *
@@ -1230,7 +1236,7 @@ void net_ipv6_input(netif_t *nif, const uint8_t src_mac[6], const uint8_t *pkt, 
     g_ipv6_dbg.last_hop_limit = ip6->hop_limit;
 
     if (icmp->type == ICMPV6_ROUTER_ADVERT) {
-        uart_write("ipv6: rx RA\n");
+        if (IPV6_DEBUG_RX) uart_write("ipv6: rx RA\n");
         g_ipv6_dbg.rx_icmpv6_ra++;
         /* Basic RFC checks: hop limit 255, source is link-local.
          * Note: Some host RA setups (observed with dnsmasq in our TAP workflow)
@@ -1335,7 +1341,7 @@ void net_ipv6_input(netif_t *nif, const uint8_t src_mac[6], const uint8_t *pkt, 
     }
 
     if (icmp->type == ICMPV6_NEIGHBOR_SOLICIT) {
-        uart_write("ipv6: rx NS\n");
+        if (IPV6_DEBUG_RX) uart_write("ipv6: rx NS\n");
         g_ipv6_dbg.rx_icmpv6_ns++;
         if (icmp_body_len < 4 + 16) return;
         const uint8_t *target = icmp_body + 4;
@@ -1370,7 +1376,7 @@ void net_ipv6_input(netif_t *nif, const uint8_t src_mac[6], const uint8_t *pkt, 
     }
 
     if (icmp->type == ICMPV6_NEIGHBOR_ADVERT) {
-        uart_write("ipv6: rx NA\n");
+        if (IPV6_DEBUG_RX) uart_write("ipv6: rx NA\n");
         g_ipv6_dbg.rx_icmpv6_na++;
         if (icmp_body_len < 4 + 16) return;
         const uint8_t *target = icmp_body + 4;
@@ -1395,7 +1401,7 @@ void net_ipv6_input(netif_t *nif, const uint8_t src_mac[6], const uint8_t *pkt, 
     }
 
     if (icmp->type == ICMPV6_ECHO_REQUEST) {
-        uart_write("ipv6: rx echo req\n");
+        if (IPV6_DEBUG_RX) uart_write("ipv6: rx echo req\n");
         g_ipv6_dbg.rx_icmpv6_echo_req++;
         /* Reply only if destined to us. */
         const uint8_t *our_ip = 0;

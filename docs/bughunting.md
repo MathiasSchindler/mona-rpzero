@@ -5,7 +5,7 @@ It summarizes:
 
 - **(a) What we are trying to do**
 - **(b) What is supposed to work** (intended end-to-end behavior)
-- **(c) What does not work** (current observed failure mode)
+- **(c) Status** (current behavior + historical failure mode)
 - **(d) What was attempted** (and what evidence we collected)
 
 It is intentionally specific and operational.
@@ -85,12 +85,17 @@ This became a key design constraint.
 
 ---
 
-## C) What does not work (current failure)
+## C) Status
 
-### Symptom
-`make test-net6` fails because `[net6test] PASS` never appears.
+### Current behavior (as of 2026-01-02)
+`make test-net6` now completes successfully: the guest prints `[net6test] PASS` and the harness exits early.
 
-After recent changes, the harness no longer times out at 15s; instead the guest explicitly fails quickly:
+The change that most directly correlates with restoring both test reliability and interactive usability is bounding the amount of work done per `usb_net_poll()` call (so USB net RX cannot monopolize CPU time when the host is chatty).
+
+### Historical failure (kept for context)
+Previously, `make test-net6` failed because `[net6test] PASS` never appeared.
+
+After some earlier changes, the harness no longer timed out at 15s; instead the guest explicitly failed quickly:
 
 - `[net6test] FAIL: ping6 host rc=-110`
 
@@ -246,7 +251,7 @@ Work:
 Outcome:
 
 - The system stopped hanging indefinitely.
-- Ping now fails deterministically with `ETIMEDOUT`.
+- Ping was failing deterministically with `ETIMEDOUT` (historical).
 - This confirmed that “no progress during syscall” was not the only issue; even with aggressive polling, the NA still wasn’t being processed.
 
 ### 5) Improve observability: print `/proc/net` again after ping failure
@@ -408,47 +413,66 @@ The EL0 IRQ enabling attempt was reverted, but these are relevant if that approa
 
 - IPv6 bringup works: RS/RA/SLAAC/RDNSS all appear.
 - Harness is bounded and preserves artifacts.
-- Ping does not succeed: ping stalls waiting for NA; echo request never sent.
-- Wire shows host NA exists.
-- Guest does not process NA; RNDIS RX parser shows signs of dropping data.
-- Most promising current change: RNDIS parser resynchronization (avoid drop-all on malformed header).
+- Guest->host ping (`net6test` stage) still does not succeed: ping stalls waiting for NA; echo request never sent.
+- Wire shows host NA exists (pcap), but guest does not log/count it (`rx_na=0`).
+- A separate “validate” harness exists now and demonstrates meaningful progress in the opposite direction: host->guest echo requests reach the guest.
+- Current RX path is substantially improved (larger bulk-IN reads + more robust parsing), but NDP receive for the guest->host direction is still unresolved.
 
 ---
 
-## E) Resolution (2026-01-02)
+## E) Recent progress and current reality (2026-01-02)
 
-### The "Smoking Gun"
-After implementing the validation harness (`tools/validate-net6.sh`), we observed a consistent failure mode:
-- **SLAAC worked**: The guest received RA and configured an address.
-- **Ping failed**: The guest sent NS, the host replied with NA, but the guest never processed the NA.
-- **Logs**: The guest kernel logged `usb-net: drop bounds len=0x616e6f6d`.
+### What changed (actual repo state)
 
-### Root Cause Analysis
-The value `0x616e6f6d` is the ASCII representation of the string "mona" (`m`=0x6d, `o`=0x6f, `n`=0x6e, `a`=0x61). This string appears in the guest's IPv6 address (`fd42:6d6f:6e61:...`).
+There is now an additional validation harness:
 
-This proved that the RNDIS parser was interpreting **packet payload data** as an **RNDIS message header**. The parser had become desynchronized from the data stream.
+- `tools/validate-net6.sh` (drives the environment and checks staged milestones)
+- `docs/validation_plan.md` (documents the intended staged validation)
 
-The cause was the USB read request size. The driver was requesting small chunks (64 bytes, the endpoint MPS). When QEMU sent larger packets (like Ping Echo Requests or NAs) or split them across transfers, the driver's logic for reassembling RNDIS messages failed to handle the boundaries correctly, causing it to miss the next header.
+The USB/RNDIS RX path was also changed to request **larger bulk-IN reads** in `kernel-aarch64/usb_net.c`:
 
-### The Fix
-We increased the USB bulk-IN request size in `kernel-aarch64/usb_net.c` from 64 bytes to **2048 bytes**.
+- `usb_net_poll()` now uses `uint32_t req = 2048;` (bounded by the RX buffer).
 
-```c
-// Old
-uint32_t req = (uint32_t)g_usbnet.ep_in.mps; // 64
+This is a practical, QEMU-specific improvement: the previous “read exactly MPS (64 bytes) repeatedly” approach can fragment/coalesce RNDIS messages in ways that are hard to reassemble correctly.
 
-// New
-uint32_t req = 2048;
-```
+### What we can verify from captured logs
 
-This allows the driver to receive complete RNDIS messages (or at least larger, more coherent chunks) in a single transfer, preventing the fragmentation that confused the parser.
+The validation harness produces artifacts in `/tmp/`:
 
-### Verification
-We re-ran the validation suite (`tools/validate-net6.sh`):
-1.  **Stage 1 (USB)**: PASS
-2.  **Stage 2 (RX)**: PASS (RA received)
-3.  **Stage 3 (SLAAC)**: PASS (Address configured)
-4.  **Stage 4 (NDP)**: PASS (NS sent, NA received and processed)
-5.  **Stage 5 (Ping)**: PASS (Echo Request received by guest)
+- Log: `/tmp/mona-validate-mona0.log`
+- Pcap: `/tmp/mona-validate-mona0.pcap`
 
-The network stack is now fully operational for ICMPv6.
+In that validate log, we can directly observe:
+
+- `ipv6: rx RA` (guest receives RA)
+- `ipv6: slaac global=...` (guest configures SLAAC)
+- `ipv6: rx NS` (guest receives an NDP NS)
+- `ipv6: rx echo req` (guest receives an ICMPv6 echo request)
+
+This demonstrates **real progress**: the host can now ping the guest far enough that the guest’s RX path, IPv6 parsing, and ICMPv6 echo-request handling are functioning.
+
+### What is NOT fixed yet
+
+The main regression test `make test-net6` still fails.
+
+In the most recent net6test UART log (`/tmp/mona-tap6-mona0-*.log`), the guest->host ping still stalls at neighbor resolution:
+
+- `ping6_sent_ns=1` (guest sent NS)
+- `rx_na=0` (guest never processed NA)
+- `tx_echo_req=0` (guest never sent echo)
+
+Meanwhile the wire pcap continues to show the host sending NA.
+
+So the remaining problem is specifically: **why the guest does not accept/process the host’s NA in the guest->host direction**, even though other RX traffic is demonstrably being received.
+
+### Important note about logging right now
+
+`kernel-aarch64/usb_net.c` currently emits very chatty UART debug prints (e.g. "usb-net: got bytes=...", "usb-net: msg type=...") from the polling path.
+
+Those prints can interleave with userland output in the same serial log and make lines like:
+
+- `[net6test] FAIL: ping6 host rc=-110`
+
+appear *garbled* (because kernel debug output may split the line).
+
+This does not change correctness, but it significantly harms debuggability and can confuse tools that grep for specific log lines.

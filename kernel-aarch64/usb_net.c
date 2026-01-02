@@ -4,6 +4,12 @@
 #include "time.h"
 #include "uart_pl011.h"
 
+#ifdef ENABLE_USB_NET_DEBUG
+#define USB_NET_DEBUG 1
+#else
+#define USB_NET_DEBUG 0
+#endif
+
 /*
  * Minimal USB "Ethernet-like" device support.
  *
@@ -766,10 +772,20 @@ int usb_net_try_bind(const usb_device_t *dev) {
 void usb_net_poll(void) {
     if (!g_usbnet.bound) return;
 
+    /* Keep polling bounded so interactive input remains responsive.
+     * usb_net_poll() can be called from timer IRQ context and from various
+     * polled loops; avoid doing unbounded work per call.
+     */
+    uint64_t start_ns = time_now_ns();
+    const uint64_t budget_ns = 2000000ull; /* ~2ms */
+
     /* Drain a small batch of packets per poll call.
      * This reduces RX starvation when the host bursts frames (RAs, NDP, ping replies).
      */
     for (int iter = 0; iter < 16; iter++) {
+        if (start_ns != 0 && (time_now_ns() - start_ns) > budget_ns) {
+            break;
+        }
         g_usbnet.rx_poll_calls++;
 
         uint8_t *buf = g_usbnet.rx_buf;
@@ -792,6 +808,9 @@ void usb_net_poll(void) {
              * the rest of the kernel if the host is chatty.
              */
             for (int chunk = 0; chunk < 32; chunk++) {
+                if (start_ns != 0 && (time_now_ns() - start_ns) > budget_ns) {
+                    break;
+                }
                 got = 0;
                 int xrc = usb_host_in_xfer(g_usbnet.addr, g_usbnet.low_speed, g_usbnet.ep_in, g_usbnet.in_pid,
                                            buf, req, &got, /*nak_ok=*/1);
@@ -815,7 +834,7 @@ void usb_net_poll(void) {
                 g_usbnet.rx_usb_bytes += got;
                 g_usbnet.last_got = got;
 
-                if (got > 0) {
+                if (USB_NET_DEBUG && got > 0) {
                     uart_write("usb-net: got bytes=");
                     uart_write_hex_u64(got);
                     uart_write("\n");
@@ -878,11 +897,13 @@ void usb_net_poll(void) {
                 }
 
                 g_usbnet.last_msg_type = msg_type;
-                uart_write("usb-net: msg type=");
-                uart_write_hex_u64(msg_type);
-                uart_write(" len=");
-                uart_write_hex_u64(msg_len);
-                uart_write("\n");
+                if (USB_NET_DEBUG) {
+                    uart_write("usb-net: msg type=");
+                    uart_write_hex_u64(msg_type);
+                    uart_write(" len=");
+                    uart_write_hex_u64(msg_len);
+                    uart_write("\n");
+                }
 
                 if (msg_type != 0x00000001u) {
                     /* Not a data packet: skip it. */
