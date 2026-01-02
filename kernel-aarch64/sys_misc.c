@@ -52,6 +52,40 @@ uint64_t sys_getrandom(uint64_t buf_user, uint64_t len, uint64_t flags) {
     return len;
 }
 
+uint64_t sys_prlimit64(int64_t pid, uint64_t resource, uint64_t new_rlim_user, uint64_t old_rlim_user) {
+    (void)resource;
+
+    /* Linux: pid==0 means “self”. We only support self for now. */
+    if (pid != 0 && pid != (int64_t)g_procs[g_cur_proc].pid) {
+        return (uint64_t)(-(int64_t)ESRCH);
+    }
+
+    /* If a new limit is provided, validate the pointer but ignore the value. */
+    if (new_rlim_user != 0) {
+        if (!user_range_ok(new_rlim_user, (uint64_t)sizeof(linux_rlimit64_t))) {
+            return (uint64_t)(-(int64_t)EFAULT);
+        }
+    }
+
+    if (old_rlim_user != 0) {
+        if (!user_range_ok(old_rlim_user, (uint64_t)sizeof(linux_rlimit64_t))) {
+            return (uint64_t)(-(int64_t)EFAULT);
+        }
+
+        linux_rlimit64_t r;
+        r.rlim_cur = LINUX_RLIM64_INFINITY;
+        r.rlim_max = LINUX_RLIM64_INFINITY;
+
+        volatile uint8_t *dst = (volatile uint8_t *)(uintptr_t)old_rlim_user;
+        const volatile uint8_t *src = (const volatile uint8_t *)(uintptr_t)&r;
+        for (uint64_t i = 0; i < (uint64_t)sizeof(r); i++) {
+            dst[i] = src[i];
+        }
+    }
+
+    return 0;
+}
+
 uint64_t sys_rt_sigprocmask(uint64_t how, uint64_t set_user, uint64_t oldset_user, uint64_t sigsetsize) {
     (void)how;
     (void)set_user;

@@ -326,8 +326,7 @@ uint64_t exception_handle(trap_frame_t *tf,
             break;
 
         case __NR_prlimit64:
-            /* Not needed yet; pretend "no limit" and succeed for basic runtimes. */
-            ret = 0;
+            ret = sys_prlimit64((int64_t)a0, a1, a2, a3);
             break;
 
         case __NR_getrandom:

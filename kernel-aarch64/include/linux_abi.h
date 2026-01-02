@@ -49,3 +49,11 @@ typedef struct {
     char machine[LINUX_UTSNAME_LEN];
     char domainname[LINUX_UTSNAME_LEN];
 } linux_utsname_t;
+
+/* prlimit64(2) uses struct rlimit64. */
+typedef struct {
+    uint64_t rlim_cur;
+    uint64_t rlim_max;
+} linux_rlimit64_t;
+
+#define LINUX_RLIM64_INFINITY (~0ull)

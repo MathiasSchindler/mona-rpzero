@@ -107,23 +107,79 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, in
 
     const uint64_t PAGE = 4096u;
     const uint64_t MAP_PRIVATE = 0x02u;
+    const uint64_t MAP_FIXED = 0x10u;
     const uint64_t MAP_ANONYMOUS = 0x20u;
+    const uint64_t MAP_STACK = 0x20000u;
     const uint64_t HEAP_GUARD = 64u * 1024u;
 
     if (len == 0) return (uint64_t)(-(int64_t)EINVAL);
-    if (addr != 0) return (uint64_t)(-(int64_t)ENOSYS);
     if (fd != -1) return (uint64_t)(-(int64_t)ENOSYS);
+    if (off != 0) return (uint64_t)(-(int64_t)ENOSYS);
 
-    /* Support only anonymous private mappings for now. */
+    /* Support only anonymous private mappings for now.
+     * Allow MAP_STACK as a hint (commonly used by runtimes for thread stacks).
+     */
     if ((flags & (MAP_PRIVATE | MAP_ANONYMOUS)) != (MAP_PRIVATE | MAP_ANONYMOUS)) {
         return (uint64_t)(-(int64_t)ENOSYS);
     }
-    if ((flags & ~(MAP_PRIVATE | MAP_ANONYMOUS)) != 0) {
+    if ((flags & MAP_FIXED) != 0) {
+        /* Fixed mappings need real VM and are easy to get wrong. */
+        return (uint64_t)(-(int64_t)ENOSYS);
+    }
+    if ((flags & ~(MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK)) != 0) {
         return (uint64_t)(-(int64_t)ENOSYS);
     }
 
     proc_t *p = &g_procs[g_cur_proc];
     uint64_t alen = align_up_u64(len, PAGE);
+
+    /* Ensure heap/stack bounds are initialized for gap checks. */
+    if (p->heap_base == 0) {
+        p->heap_base = align_up_u64(USER_REGION_BASE, 16);
+        p->heap_end = p->heap_base;
+    }
+    if (p->stack_low == 0) {
+        p->stack_low = p->tf.sp_el0;
+    }
+
+    /* If the caller provided an address, treat it as a hint (Linux behavior).
+     * We try it first; if it doesn't fit, fall back to choosing an address.
+     */
+    if (addr != 0) {
+        if ((addr & (PAGE - 1u)) != 0) {
+            return (uint64_t)(-(int64_t)EINVAL);
+        }
+
+        uint64_t base = addr;
+        uint64_t end_hint = base + alen;
+        if (end_hint >= base) {
+            uint64_t hi = proc_mmap_hi(p);
+
+            uint64_t heap_lim = p->heap_end;
+            if (heap_lim < p->heap_base) heap_lim = p->heap_base;
+            heap_lim = align_up_u64(heap_lim, PAGE);
+
+            if (base >= USER_REGION_BASE && end_hint <= hi && base >= heap_lim + HEAP_GUARD) {
+                uint64_t ovb = 0;
+                if (!vma_overlaps(p, base, alen, &ovb)) {
+                    int slot = -1;
+                    for (uint64_t i = 0; i < MAX_VMAS; i++) {
+                        if (!p->vmas[i].used) {
+                            slot = (int)i;
+                            break;
+                        }
+                    }
+                    if (slot >= 0) {
+                        p->vmas[slot].used = 1;
+                        p->vmas[slot].base = base;
+                        p->vmas[slot].len = alen;
+                        return base;
+                    }
+                }
+            }
+        }
+        /* Hint failed: continue with allocator-chosen address. */
+    }
 
     /* Lazy init. */
     if (p->mmap_next == 0) {
@@ -182,19 +238,80 @@ uint64_t sys_munmap(uint64_t addr, uint64_t len) {
 
     uint64_t alen = align_up_u64(len, PAGE);
     proc_t *p = &g_procs[g_cur_proc];
+    uint64_t unmap_base = addr;
+    uint64_t unmap_end = addr + alen;
+    if (unmap_end < unmap_base) return (uint64_t)(-(int64_t)EINVAL);
+
+    int unmapped_any = 0;
 
     for (uint64_t i = 0; i < MAX_VMAS; i++) {
         if (!p->vmas[i].used) continue;
-        if (p->vmas[i].base == addr && p->vmas[i].len == alen) {
+
+        uint64_t vb = p->vmas[i].base;
+        uint64_t ve = vb + p->vmas[i].len;
+        if (ve < vb) continue;
+
+        /* No overlap? */
+        if (unmap_end <= vb || unmap_base >= ve) continue;
+
+        /* Full removal */
+        if (unmap_base <= vb && unmap_end >= ve) {
             p->vmas[i].used = 0;
             p->vmas[i].base = 0;
             p->vmas[i].len = 0;
-            p->mmap_next = proc_recompute_mmap_next(p);
-            return 0;
+            unmapped_any = 1;
+            continue;
+        }
+
+        /* Trim front */
+        if (unmap_base <= vb && unmap_end < ve) {
+            p->vmas[i].base = unmap_end;
+            p->vmas[i].len = ve - unmap_end;
+            unmapped_any = 1;
+            continue;
+        }
+
+        /* Trim tail */
+        if (unmap_base > vb && unmap_end >= ve) {
+            p->vmas[i].len = unmap_base - vb;
+            unmapped_any = 1;
+            continue;
+        }
+
+        /* Split into two VMAs */
+        if (unmap_base > vb && unmap_end < ve) {
+            int slot = -1;
+            for (uint64_t j = 0; j < MAX_VMAS; j++) {
+                if (!p->vmas[j].used) {
+                    slot = (int)j;
+                    break;
+                }
+            }
+            if (slot < 0) {
+                return (uint64_t)(-(int64_t)ENOMEM);
+            }
+
+            uint64_t left_len = unmap_base - vb;
+            uint64_t right_base = unmap_end;
+            uint64_t right_len = ve - unmap_end;
+
+            p->vmas[i].len = left_len;
+
+            p->vmas[slot].used = 1;
+            p->vmas[slot].base = right_base;
+            p->vmas[slot].len = right_len;
+
+            unmapped_any = 1;
+            continue;
         }
     }
 
-    return (uint64_t)(-(int64_t)EINVAL);
+    if (!unmapped_any) {
+        return (uint64_t)(-(int64_t)EINVAL);
+    }
+
+    p->mmap_next = proc_recompute_mmap_next(p);
+    return 0;
 }
 
 uint64_t sys_execve(trap_frame_t *tf, uint64_t pathname_user, uint64_t argv_user, uint64_t envp_user) {
