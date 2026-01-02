@@ -780,9 +780,11 @@ void usb_net_poll(void) {
          * MPS, the transfer may not complete (no short packet) and we'd time out
          * and lose already-received bytes. To avoid that, read in MPS-sized chunks
          * and treat a short packet as end-of-transfer.
+         *
+         * UPDATE: QEMU RNDIS seems to behave better if we request larger chunks,
+         * allowing it to coalesce packets or send full messages.
          */
-        uint32_t req = (uint32_t)g_usbnet.ep_in.mps;
-        if (req == 0) req = 512;
+        uint32_t req = 2048;
         if (req > (uint32_t)sizeof(g_usbnet.rx_buf)) req = (uint32_t)sizeof(g_usbnet.rx_buf);
 
         if (g_usbnet.mode == USBNET_MODE_RNDIS) {
@@ -812,6 +814,12 @@ void usb_net_poll(void) {
                 g_usbnet.rx_usb_xfers++;
                 g_usbnet.rx_usb_bytes += got;
                 g_usbnet.last_got = got;
+
+                if (got > 0) {
+                    uart_write("usb-net: got bytes=");
+                    uart_write_hex_u64(got);
+                    uart_write("\n");
+                }
 
                 /* Toggle PID only on successful (non-NAK) transactions with data. */
                 g_usbnet.in_pid = (g_usbnet.in_pid == USB_PID_DATA0) ? USB_PID_DATA1 : USB_PID_DATA0;
@@ -852,6 +860,13 @@ void usb_net_poll(void) {
                     continue;
                 }
                 if (msg_len > (uint32_t)sizeof(g_usbnet.rndis_accum)) {
+                    if (g_usbnet.rx_rndis_drop_bounds < 10) {
+                        uart_write("usb-net: drop bounds len=");
+                        uart_write_hex_u64(msg_len);
+                        uart_write(" off=");
+                        uart_write_hex_u64(off);
+                        uart_write("\n");
+                    }
                     g_usbnet.rx_rndis_drop_bounds++;
                     off += 1;
                     continue;
@@ -863,6 +878,12 @@ void usb_net_poll(void) {
                 }
 
                 g_usbnet.last_msg_type = msg_type;
+                uart_write("usb-net: msg type=");
+                uart_write_hex_u64(msg_type);
+                uart_write(" len=");
+                uart_write_hex_u64(msg_len);
+                uart_write("\n");
+
                 if (msg_type != 0x00000001u) {
                     /* Not a data packet: skip it. */
                     g_usbnet.rx_rndis_drop_type++;
