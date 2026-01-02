@@ -10,10 +10,13 @@ set -euo pipefail
 # guest global address).
 
 IFNAME="${1:-${TAP_IF:-mona0}}"
+TEST_TIMEOUT_S="${TEST_TIMEOUT_S:-15}"
+START_SECS=$SECONDS
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STATE_DIR="/tmp/mona-tap6-${IFNAME}"
 LOGFILE="${STATE_DIR}/qemu-net6test.log"
+ARCHIVE_STEM="/tmp/mona-tap6-${IFNAME}-$(date +%Y%m%d-%H%M%S)"
 
 cd "$ROOT_DIR"
 
@@ -39,7 +42,45 @@ fi
 
 mkdir -p "$STATE_DIR"
 
+qpid=""
+
+kill_pid() {
+  local pid="$1"
+  if [[ -z "$pid" ]]; then
+    return 0
+  fi
+  if ! kill -0 "$pid" 2>/dev/null; then
+    return 0
+  fi
+  kill -TERM "$pid" >/dev/null 2>&1 || true
+  local i
+  for i in $(seq 1 40); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      return 0
+    fi
+    sleep 0.05
+  done
+  kill -KILL "$pid" >/dev/null 2>&1 || true
+}
+
+wait_for_exit() {
+  local pid="$1"
+  local seconds="$2"
+  local end=$((SECONDS + seconds))
+  while kill -0 "$pid" 2>/dev/null; do
+    if (( SECONDS >= end )); then
+      return 124
+    fi
+    sleep 0.05
+  done
+  wait "$pid"
+}
+
 cleanup() {
+  kill_pid "$qpid"
+  if [[ -f "$LOGFILE" ]]; then
+    cp -f "$LOGFILE" "${ARCHIVE_STEM}.hostping.log" >/dev/null 2>&1 || true
+  fi
   sudo env MONA_TAP_DEBUG="${MONA_TAP_DEBUG:-1}" MONA_ENABLE_NAT66="${MONA_ENABLE_NAT66:-0}" tools/tap6-down.sh "$IFNAME" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -107,13 +148,22 @@ wait_for() {
   return 1
 }
 
+budget_left() {
+  local remaining=$((TEST_TIMEOUT_S - (SECONDS - START_SECS)))
+  if (( remaining < 0 )); then
+    remaining=0
+  fi
+  echo "$remaining"
+}
+
 echo "[test-net6-hostping] bringing up TAP $IFNAME (debug capture enabled)"
-sudo env MONA_TAP_DEBUG="${MONA_TAP_DEBUG:-1}" MONA_ENABLE_NAT66="${MONA_ENABLE_NAT66:-0}" tools/tap6-up.sh "$IFNAME" "${SUDO_USER:-$USER}" >/dev/null
+sudo env MONA_TAP_DEBUG="${MONA_TAP_DEBUG:-1}" MONA_ENABLE_NAT66="${MONA_ENABLE_NAT66:-0}" \
+  MONA_RA_MIN_S="${MONA_RA_MIN_S:-1}" MONA_RA_MAX_S="${MONA_RA_MAX_S:-5}" \
+  tools/tap6-up.sh "$IFNAME" "${SUDO_USER:-$USER}" >/dev/null
 
 : >"$LOGFILE"
 
 echo "[test-net6-hostping] starting QEMU (log: $LOGFILE)"
-set +e
 
 QEMU_CMD=(bash tools/run-qemu-raspi3b.sh \
   --kernel "$KERNEL_IMG" \
@@ -121,21 +171,26 @@ QEMU_CMD=(bash tools/run-qemu-raspi3b.sh \
   --mem "${MEM:-1024}" \
   --usb-net-backend tap \
   --tap-if "$IFNAME" \
-  --serial stdio \
+  --serial "file:$LOGFILE" \
   --monitor none)
 
 # When stdout is redirected to a file, QEMU output can be block-buffered.
 # Use stdbuf if available to make the logfile update promptly.
-if command -v stdbuf >/dev/null 2>&1; then
-  stdbuf -oL -eL "${QEMU_CMD[@]}" >"$LOGFILE" 2>&1 &
+set +e
+left="$(budget_left)"
+if (( left < 1 )); then left=1; fi
+if command -v timeout >/dev/null 2>&1; then
+  timeout -k 1s "$left" "${QEMU_CMD[@]}" &
 else
-  "${QEMU_CMD[@]}" >"$LOGFILE" 2>&1 &
+  "${QEMU_CMD[@]}" &
 fi
 qpid=$!
 set -e
 
 # Wait until net6test has printed its /proc/net dump so we can parse the MAC.
-if ! wait_for "10" grep -q '^usb0[[:space:]]\+[0-9]\+' "$LOGFILE"; then
+left="$(budget_left)"
+if (( left < 1 )); then left=1; fi
+if ! wait_for "$left" grep -q '^usb0[[:space:]]\+[0-9]\+' "$LOGFILE"; then
   echo "[test-net6-hostping] FAIL: guest did not print /proc/net (MAC discovery) within timeout" >&2
   tail -n 160 "$LOGFILE" >&2 || true
   exit 1
@@ -154,7 +209,9 @@ echo "[test-net6-hostping] guest_global=$guest_global"
 # Wait for the guest to complete its own net6test (guest->host ping) first.
 # This typically makes the host learn the guest's global->MAC mapping, avoiding
 # a dependency on multicast NS delivery to the guest.
-if ! wait_for "30" grep -q '\[net6test\] PASS' "$LOGFILE"; then
+left="$(budget_left)"
+if (( left < 1 )); then left=1; fi
+if ! wait_for "$left" grep -q '\[net6test\] PASS' "$LOGFILE"; then
   echo "[test-net6-hostping] FAIL: guest did not report PASS within timeout" >&2
   tail -n 160 "$LOGFILE" >&2 || true
   exit 1
@@ -183,18 +240,25 @@ if command -v ping >/dev/null 2>&1; then
       tcpdump -nn -r "$STATE_DIR/tap.pcap" 'icmp6' 2>/dev/null | head -n 60 >&2 || true
     fi
 
-    # Still wait for QEMU to exit so teardown captures files.
-    wait "$qpid" >/dev/null 2>&1 || true
+    # Still wait briefly for QEMU to exit so teardown captures files.
+    wait_for_exit "$qpid" "${TEST_TIMEOUT_S}" >/dev/null 2>&1 || true
     exit 1
   fi
 else
   echo "[test-net6-hostping] SKIP: host ping not available" >&2
 fi
 
-# Wait for QEMU to exit.
+# Wait for QEMU to exit (but don't hang forever).
 set +e
-wait "$qpid"
+left="$(budget_left)"
+if (( left < 1 )); then left=1; fi
+wait_for_exit "$qpid" "$left"
 qrc=$?
+if [[ $qrc -eq 124 ]]; then
+  echo "[test-net6-hostping] TIMEOUT: QEMU still running after ${TEST_TIMEOUT_S}s; killing" >&2
+  kill_pid "$qpid"
+  wait "$qpid" >/dev/null 2>&1 || true
+fi
 set -e
 
 echo "[test-net6-hostping] QEMU exit code: $qrc"

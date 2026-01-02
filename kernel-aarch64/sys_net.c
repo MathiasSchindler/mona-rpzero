@@ -171,7 +171,9 @@ uint64_t sys_mona_udp6_recvfrom(trap_frame_t *tf,
     if (timeout_ms != 0) {
         uint64_t now = time_now_ns();
         uint64_t timeout_ns = timeout_ms * 1000000ull;
-        cur->sleep_deadline_ns = (now == 0) ? 0 : (now + timeout_ns);
+        uint64_t deadline = now + timeout_ns;
+        if (deadline < now) deadline = 0xFFFFFFFFFFFFFFFFull;
+        cur->sleep_deadline_ns = deadline;
         cur->state = PROC_SLEEPING;
     } else {
         cur->sleep_deadline_ns = 0;
@@ -224,7 +226,7 @@ retry_wait:
     if (trc == -(int)EAGAIN) {
         if (cur->sleep_deadline_ns != 0) {
             uint64_t now = time_now_ns();
-            if (now != 0 && now >= cur->sleep_deadline_ns) {
+            if (now >= cur->sleep_deadline_ns) {
                 cur->pending_udp6_recv = 0;
                 cur->pending_udp6_sock_id = 0;
                 cur->pending_udp6_fd = 0;
@@ -301,7 +303,11 @@ uint64_t sys_mona_ping6(trap_frame_t *tf,
     cur->ping6_rtt_user = rtt_ns_user;
     cur->ping6_ret = 0;
 
-    cur->sleep_deadline_ns = (now == 0) ? 0 : (now + timeout_ns);
+    {
+        uint64_t deadline = now + timeout_ns;
+        if (deadline < now) deadline = 0xFFFFFFFFFFFFFFFFull;
+        cur->sleep_deadline_ns = deadline;
+    }
     cur->state = PROC_SLEEPING;
 
     int rc = net_ipv6_ping6_start(g_cur_proc, nif, dst_ip, (uint16_t)ident, (uint16_t)seq);

@@ -9,10 +9,14 @@ set -euo pipefail
 # This is intentionally opinionated: it captures only the signals we need.
 
 IFNAME="${1:-${TAP_IF:-mona0}}"
+TEST_TIMEOUT_S="${TEST_TIMEOUT_S:-15}"
+OWNER_USER="${SUDO_USER:-$USER}"
+START_SECS=$SECONDS
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STATE_DIR="/tmp/mona-tap6-${IFNAME}"
 LOGFILE="${STATE_DIR}/qemu-net6test.log"
+ARCHIVE_STEM="/tmp/mona-tap6-${IFNAME}-$(date +%Y%m%d-%H%M%S)"
 
 cd "$ROOT_DIR"
 
@@ -40,28 +44,53 @@ fi
 mkdir -p "$STATE_DIR"
 
 cleanup() {
+  # tap6-down may remove $STATE_DIR; preserve the QEMU UART log for debugging.
+  if [[ -f "$LOGFILE" ]]; then
+    cp -f "$LOGFILE" "${ARCHIVE_STEM}.log" >/dev/null 2>&1 || true
+  fi
   sudo env MONA_TAP_DEBUG="${MONA_TAP_DEBUG:-1}" MONA_ENABLE_NAT66="${MONA_ENABLE_NAT66:-0}" tools/tap6-down.sh "$IFNAME" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
 echo "[test-net6] bringing up TAP $IFNAME (debug capture enabled)"
-sudo env MONA_TAP_DEBUG="${MONA_TAP_DEBUG:-1}" MONA_ENABLE_NAT66="${MONA_ENABLE_NAT66:-0}" tools/tap6-up.sh "$IFNAME" "${SUDO_USER:-$USER}" >/dev/null
+sudo env MONA_TAP_DEBUG="${MONA_TAP_DEBUG:-1}" MONA_ENABLE_NAT66="${MONA_ENABLE_NAT66:-0}" \
+  MONA_RA_MIN_S="${MONA_RA_MIN_S:-1}" MONA_RA_MAX_S="${MONA_RA_MAX_S:-5}" \
+  tools/tap6-up.sh "$IFNAME" "$OWNER_USER" >/dev/null
+
+# tap6-up runs as root and may end up owning the state dir.
+# Make it user-writable so this script can create temporary files (FIFO, logs).
+sudo chown "$OWNER_USER":"$OWNER_USER" "$STATE_DIR" >/dev/null 2>&1 || true
+sudo chmod 0777 "$STATE_DIR" >/dev/null 2>&1 || true
 
 echo "[test-net6] running QEMU (log: $LOGFILE)"
+
+remaining=$((TEST_TIMEOUT_S - (SECONDS - START_SECS)))
+if (( remaining < 1 )); then
+  remaining=1
+fi
+
+QEMU_CMD=(bash tools/run-qemu-raspi3b.sh \
+  --kernel "$KERNEL_IMG" \
+  --dtb "$DTB" \
+  --mem "${MEM:-1024}" \
+  --usb-net-backend tap \
+  --tap-if "$IFNAME" \
+  --serial "file:$LOGFILE" \
+  --monitor none)
+
 set +e
-(
-  bash tools/run-qemu-raspi3b.sh \
-    --kernel "$KERNEL_IMG" \
-    --dtb "$DTB" \
-    --mem "${MEM:-1024}" \
-    --usb-net-backend tap \
-    --tap-if "$IFNAME" \
-    --serial stdio \
-    --monitor none \
-    2>&1 | tee "$LOGFILE"
-)
-qrc=${PIPESTATUS[0]}
+if command -v timeout >/dev/null 2>&1; then
+  timeout -k 1s "$remaining" "${QEMU_CMD[@]}"
+  qrc=$?
+else
+  "${QEMU_CMD[@]}"
+  qrc=$?
+fi
 set -e
+
+if [[ $qrc -eq 124 ]]; then
+  echo "[test-net6] TIMEOUT: QEMU exceeded ${TEST_TIMEOUT_S}s" >&2
+fi
 
 echo "[test-net6] QEMU exit code: $qrc"
 

@@ -13,7 +13,7 @@ Usage:
     [--usb-net-backend user|tap] \
     [--usb-net-mac xx:xx:xx:xx:xx:xx] \
     [--tap-if name] \
-    [--serial stdio|vc|null] \
+    [--serial stdio|vc|null|file:<path>] \
     [--monitor none|stdio|vc] \
     --append "console=ttyAMA0 root=/dev/mmcblk0p2 rootwait"
 
@@ -126,8 +126,11 @@ if [[ "$GFX" -eq 1 ]]; then
     stdio|vc|null)
       cmd+=( -display "$DISPLAY_BACKEND" -serial "$SERIAL_BACKEND" )
       ;;
+    file:*)
+      cmd+=( -display "$DISPLAY_BACKEND" -serial "$SERIAL_BACKEND" )
+      ;;
     *)
-      echo "Unknown --serial backend: $SERIAL_BACKEND (expected: stdio|vc|null)" >&2
+      echo "Unknown --serial backend: $SERIAL_BACKEND (expected: stdio|vc|null|file:<path>)" >&2
       exit 2
       ;;
   esac
@@ -145,6 +148,34 @@ if [[ "$GFX" -eq 1 ]]; then
   fi
 else
   cmd+=( -nographic )
+
+  # In non-graphical mode, still honor explicit serial/monitor backends.
+  if [[ -n "$SERIAL_BACKEND" ]]; then
+    case "$SERIAL_BACKEND" in
+      stdio|vc|null)
+        cmd+=( -serial "$SERIAL_BACKEND" )
+        ;;
+      file:*)
+        cmd+=( -serial "$SERIAL_BACKEND" )
+        ;;
+      *)
+        echo "Unknown --serial backend: $SERIAL_BACKEND (expected: stdio|vc|null|file:<path>)" >&2
+        exit 2
+        ;;
+    esac
+  fi
+
+  if [[ -n "$MONITOR_BACKEND" ]]; then
+    case "$MONITOR_BACKEND" in
+      none|stdio|vc)
+        cmd+=( -monitor "$MONITOR_BACKEND" )
+        ;;
+      *)
+        echo "Unknown --monitor backend: $MONITOR_BACKEND (expected: none|stdio|vc)" >&2
+        exit 2
+        ;;
+    esac
+  fi
 fi
 
 if [[ -n "$SD" ]]; then

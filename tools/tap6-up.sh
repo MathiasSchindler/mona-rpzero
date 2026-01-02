@@ -30,6 +30,8 @@ PREFIX64="${MONA_PREFIX64:-fd42:6d6f:6e61:1::/64}"
 HOST_IP="${MONA_HOST_IP:-fd42:6d6f:6e61:1::1}"
 ENABLE_NAT66="${MONA_ENABLE_NAT66:-0}"
 DEBUG="${MONA_TAP_DEBUG:-0}"
+RA_MIN_S="${MONA_RA_MIN_S:-10}"
+RA_MAX_S="${MONA_RA_MAX_S:-1200}"
 
 STATE_DIR="/tmp/mona-tap6-${IFNAME}"
 DNSMASQ_PIDFILE="$STATE_DIR/dnsmasq.pid"
@@ -78,7 +80,7 @@ port=53
 # Send Router Advertisements for SLAAC on this interface.
 enable-ra
 # Make RA frequent so the guest configures quickly.
-ra-param=$IFNAME,10,1200
+ra-param=$IFNAME,${RA_MIN_S},${RA_MAX_S}
 # Use the interface address/prefix as the advertised /64.
 dhcp-range=::,constructor:$IFNAME,slaac,64,10m
 # Advertise the DNS server via RDNSS (RFC 8106).

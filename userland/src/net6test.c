@@ -223,9 +223,11 @@ int main(int argc, char **argv, char **envp) {
     char proc_net[2048];
     uint64_t proc_len = 0;
 
-    /* Wait up to ~6 seconds for SLAAC + router. */
+    /* Wait up to ~10 seconds for SLAAC + router.
+     * Keep the "kick ping" timeout small so the wall time stays bounded.
+     */
     int ready = 0;
-    for (uint64_t i = 0; i < 60; i++) {
+    for (uint64_t i = 0; i < 90; i++) {
         if (read_whole_file("/proc/net", proc_net, sizeof(proc_net), &proc_len) != 0) {
             puts_ln("[net6test] failed to read /proc/net");
             sleep_ms(100);
@@ -235,16 +237,6 @@ int main(int argc, char **argv, char **envp) {
         if (usb0_has_global_and_router(proc_net, proc_len)) {
             ready = 1;
             break;
-        }
-
-        /* Keep the stack active during bringup (RS/NS). */
-        {
-            static const uint8_t host_ip[16] = {
-                0xfd, 0x42, 0x6d, 0x6f, 0x6e, 0x61, 0x00, 0x01,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
-            };
-            uint64_t rtt = 0;
-            (void)sys_mona_ping6(host_ip, 0x1234, i, 250, &rtt);
         }
 
         sleep_ms(100);

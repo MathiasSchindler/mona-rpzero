@@ -689,6 +689,46 @@ static int ipv6_send_icmp(netif_t *nif,
                           const uint8_t *icmp_body,
                           size_t icmp_body_len);
 
+static void netif_ipv6_update_multicast_list(netif_t *nif) {
+    if (!nif || !nif->ops || !nif->ops->set_multicast_list) return;
+
+    /* Keep this small: just what's needed for NDP + RA in our TAP setup.
+     * Each entry is a 6-byte Ethernet multicast MAC.
+     */
+    uint8_t macs[6 * 4];
+    size_t count = 0;
+
+    /* ff02::1 all-nodes */
+    macs[count * 6 + 0] = 0x33; macs[count * 6 + 1] = 0x33; macs[count * 6 + 2] = 0x00;
+    macs[count * 6 + 3] = 0x00; macs[count * 6 + 4] = 0x00; macs[count * 6 + 5] = 0x01;
+    count++;
+
+    /* ff02::2 all-routers */
+    macs[count * 6 + 0] = 0x33; macs[count * 6 + 1] = 0x33; macs[count * 6 + 2] = 0x00;
+    macs[count * 6 + 3] = 0x00; macs[count * 6 + 4] = 0x00; macs[count * 6 + 5] = 0x02;
+    count++;
+
+    /* Solicited-node multicast for our primary address (prefer global if present). */
+    {
+        uint8_t sn_ip[16];
+        uint8_t sn_mac[6];
+        const uint8_t *target = nif->ipv6_global_valid ? nif->ipv6_global : (nif->ipv6_ll_valid ? nif->ipv6_ll : 0);
+        if (target) {
+            ipv6_make_solicited_node_multicast(sn_ip, target);
+            ipv6_multicast_to_eth(sn_ip, sn_mac);
+            for (int i = 0; i < 6; i++) macs[count * 6 + i] = sn_mac[i];
+            count++;
+        }
+    }
+
+    /* ff02::16 MLDv2 reports (harmless extra; helps some NIC filters). */
+    macs[count * 6 + 0] = 0x33; macs[count * 6 + 1] = 0x33; macs[count * 6 + 2] = 0x00;
+    macs[count * 6 + 3] = 0x00; macs[count * 6 + 4] = 0x00; macs[count * 6 + 5] = 0x16;
+    count++;
+
+    (void)nif->ops->set_multicast_list(nif, macs, count);
+}
+
 static int send_unsolicited_neighbor_advertisement(netif_t *nif, const uint8_t target_ip[16]) {
     if (!nif || !target_ip) return -1;
 
@@ -931,6 +971,9 @@ void net_ipv6_configure_netif(netif_t *nif) {
     if (!nif) return;
     ipv6_make_link_local_from_mac(nif->ipv6_ll, nif->mac);
     nif->ipv6_ll_valid = 1;
+
+    /* Ensure we receive NDP/RA multicast early (especially important for USB RNDIS). */
+    netif_ipv6_update_multicast_list(nif);
 
     /* Best-effort: kick Router Solicitation to speed up SLAAC in TAP setups. */
     (void)send_router_solicitation(nif);
@@ -1220,6 +1263,11 @@ void net_ipv6_input(netif_t *nif, const uint8_t src_mac[6], const uint8_t *pkt, 
                     nif->ipv6_prefix_len = prefix_len;
                     memcpy_u8(nif->ipv6_global, new_global, 16);
                     nif->ipv6_global_valid = 1;
+
+                    /* Now that we have a stable address, refresh multicast filters
+                     * so solicited-node NS for our global address is delivered.
+                     */
+                    netif_ipv6_update_multicast_list(nif);
 
                     /* Help the host learn our global->MAC mapping promptly.
                      * This avoids relying on host-to-guest multicast NS delivery.

@@ -40,6 +40,9 @@ DTB ?= $(firstword $(wildcard $(DTB_CANDIDATES)))
 # QEMU raspi3b currently requires exactly 1 GiB RAM.
 MEM ?= 1024
 
+# Network tests should finish quickly; enforce a hard cap.
+TEST_TIMEOUT_S ?= 15
+
 # Framebuffer request (used by `make run-gfx`).
 FB_W ?= 1920
 FB_H ?= 1080
@@ -178,7 +181,7 @@ test-net6: userland
 	fi
 	@# Build kernel with USB_NET enabled and run the dedicated net6 test payload.
 	@$(MAKE) -C "$(AARCH64_DIR)" CROSS="$(AARCH64_CROSS)" USERPROG=net6test KERNEL_DEFS="-DQEMU_SEMIHOSTING -DENABLE_USB_NET" all
-	@DTB="$(DTB)" MEM="$(MEM)" KERNEL_IMG="$(AARCH64_IMG)" TAP_IF="$(TAP_IF)" tools/test-net6.sh "$(TAP_IF)"
+	@DTB="$(DTB)" MEM="$(MEM)" KERNEL_IMG="$(AARCH64_IMG)" TAP_IF="$(TAP_IF)" TEST_TIMEOUT_S="$(TEST_TIMEOUT_S)" tools/test-net6.sh "$(TAP_IF)"
 
 test-net6-hostping: userland
 	@echo "Starting QEMU (raspi3b) IPv6 bringup test + host->guest ping6 (TAP)"
@@ -188,7 +191,7 @@ test-net6-hostping: userland
 		exit 2; \
 	fi
 	@$(MAKE) -C "$(AARCH64_DIR)" CROSS="$(AARCH64_CROSS)" USERPROG=net6test KERNEL_DEFS="-DQEMU_SEMIHOSTING -DENABLE_USB_NET" all
-	@DTB="$(DTB)" MEM="$(MEM)" KERNEL_IMG="$(AARCH64_IMG)" TAP_IF="$(TAP_IF)" tools/test-net6-hostping.sh "$(TAP_IF)"
+	@DTB="$(DTB)" MEM="$(MEM)" KERNEL_IMG="$(AARCH64_IMG)" TAP_IF="$(TAP_IF)" TEST_TIMEOUT_S="$(TEST_TIMEOUT_S)" tools/test-net6-hostping.sh "$(TAP_IF)"
 
 test-aarch64: userland
 	@echo "Starting QEMU (raspi3b) selftests"

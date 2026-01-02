@@ -49,6 +49,17 @@ typedef struct {
     uint32_t last_data_len;
     uint16_t last_ethertype;
 
+    /* Persistent RX buffer to avoid large stack use and allow larger bulk-IN reads.
+     * Larger reads reduce the chance of truncating coalesced RNDIS messages.
+     */
+    uint8_t rx_buf[8192] __attribute__((aligned(64)));
+
+    /* RNDIS bulk-IN transfers may split a RNDIS packet message across multiple
+     * USB transactions. Accumulate and parse complete messages across polls.
+     */
+    uint8_t rndis_accum[16384] __attribute__((aligned(64)));
+    uint32_t rndis_accum_len;
+
 
     netif_t nif;
 } usb_net_state_t;
@@ -360,7 +371,8 @@ static int rndis_initialize(usb_net_state_t *st) {
     m.request_id = ++st->rndis_request_id;
     m.major = 1;
     m.minor = 0;
-    m.max_xfer_size = 2048;
+    /* Allow larger bulk-IN transfers; QEMU may coalesce multiple frames. */
+    m.max_xfer_size = 8192;
 
     if (rndis_send_cmd(st->addr, st->low_speed, st->ctrl_if_num, &m, (uint16_t)sizeof(m)) != 0) return -1;
 
@@ -760,43 +772,80 @@ void usb_net_poll(void) {
     for (int iter = 0; iter < 16; iter++) {
         g_usbnet.rx_poll_calls++;
 
-        uint8_t buf[2048] __attribute__((aligned(64)));
+        uint8_t *buf = g_usbnet.rx_buf;
         uint32_t got = 0;
 
-        if (usb_host_in_xfer(g_usbnet.addr, g_usbnet.low_speed, g_usbnet.ep_in, g_usbnet.in_pid,
-                             buf, sizeof(buf), &got, /*nak_ok=*/1) != 0) {
-            g_usbnet.rx_errors++;
-            return;
-        }
-
-        if (got == 0) {
-            g_usbnet.rx_naks++;
-            return;
-        }
-
-        g_usbnet.rx_usb_xfers++;
-        g_usbnet.rx_usb_bytes += got;
-        g_usbnet.last_got = got;
-
-        /* Toggle PID only on successful (non-NAK) transactions with data. */
-        g_usbnet.in_pid = (g_usbnet.in_pid == USB_PID_DATA0) ? USB_PID_DATA1 : USB_PID_DATA0;
+        /* For bulk-IN, completion semantics depend on short packets. If we request
+         * a large length and the device happens to return an exact multiple of
+         * MPS, the transfer may not complete (no short packet) and we'd time out
+         * and lose already-received bytes. To avoid that, read in MPS-sized chunks
+         * and treat a short packet as end-of-transfer.
+         */
+        uint32_t req = (uint32_t)g_usbnet.ep_in.mps;
+        if (req == 0) req = 512;
+        if (req > (uint32_t)sizeof(g_usbnet.rx_buf)) req = (uint32_t)sizeof(g_usbnet.rx_buf);
 
         if (g_usbnet.mode == USBNET_MODE_RNDIS) {
-            /* QEMU/virtual RNDIS can coalesce multiple RNDIS packet messages into
-             * a single bulk-IN transfer. Parse all messages we can.
+            /* Read up to a bounded number of chunks per poll so we don't starve
+             * the rest of the kernel if the host is chatty.
              */
+            for (int chunk = 0; chunk < 32; chunk++) {
+                got = 0;
+                if (usb_host_in_xfer(g_usbnet.addr, g_usbnet.low_speed, g_usbnet.ep_in, g_usbnet.in_pid,
+                                     buf, req, &got, /*nak_ok=*/1) != 0) {
+                    g_usbnet.rx_errors++;
+                    return;
+                }
+
+                if (got == 0) {
+                    g_usbnet.rx_naks++;
+                    break;
+                }
+
+                g_usbnet.rx_usb_xfers++;
+                g_usbnet.rx_usb_bytes += got;
+                g_usbnet.last_got = got;
+
+                /* Toggle PID only on successful (non-NAK) transactions with data. */
+                g_usbnet.in_pid = (g_usbnet.in_pid == USB_PID_DATA0) ? USB_PID_DATA1 : USB_PID_DATA0;
+
+                /* Accumulate chunk bytes. */
+                if (g_usbnet.rndis_accum_len + got > (uint32_t)sizeof(g_usbnet.rndis_accum)) {
+                    g_usbnet.rndis_accum_len = 0;
+                }
+                uint32_t aoff = g_usbnet.rndis_accum_len;
+                for (uint32_t i = 0; i < got; i++) g_usbnet.rndis_accum[aoff + i] = buf[i];
+                g_usbnet.rndis_accum_len += got;
+
+                /* Short packet ends this device transfer. */
+                if (got < req) break;
+            }
+
+            /* QEMU/virtual RNDIS can coalesce multiple RNDIS packet messages into
+             * a single bulk-IN transfer, and may also split a message across
+             * multiple transfers. Parse complete messages from the accumulator.
+             */
+
             uint32_t off = 0;
-            while (off + sizeof(rndis_packet_msg_t) <= got) {
-                uint8_t *base = buf + off;
+            while (off + sizeof(rndis_packet_msg_t) <= g_usbnet.rndis_accum_len) {
+                uint8_t *base = g_usbnet.rndis_accum + off;
                 rndis_packet_msg_t *p = (rndis_packet_msg_t *)base;
 
                 uint32_t msg_len = p->msg_len;
                 if (msg_len < sizeof(rndis_packet_msg_t)) {
                     g_usbnet.rx_rndis_drop_small++;
-                    break;
+                    /* Corrupt/unsync; drop accumulator to resync. */
+                    g_usbnet.rndis_accum_len = 0;
+                    return;
                 }
-                if ((uint64_t)off + msg_len > got) {
+                if (msg_len > (uint32_t)sizeof(g_usbnet.rndis_accum)) {
                     g_usbnet.rx_rndis_drop_bounds++;
+                    g_usbnet.rndis_accum_len = 0;
+                    return;
+                }
+
+                /* Wait for more data if this message is incomplete. */
+                if ((uint64_t)off + msg_len > g_usbnet.rndis_accum_len) {
                     break;
                 }
 
@@ -846,7 +895,31 @@ void usb_net_poll(void) {
 
                 off += msg_len;
             }
+
+            /* Drop consumed bytes, keep any trailing partial message for next poll. */
+            if (off > 0) {
+                uint32_t remain = g_usbnet.rndis_accum_len - off;
+                for (uint32_t i = 0; i < remain; i++) g_usbnet.rndis_accum[i] = g_usbnet.rndis_accum[off + i];
+                g_usbnet.rndis_accum_len = remain;
+            }
         } else {
+            /* Non-RNDIS: single-chunk best-effort. */
+            if (usb_host_in_xfer(g_usbnet.addr, g_usbnet.low_speed, g_usbnet.ep_in, g_usbnet.in_pid,
+                                 buf, req, &got, /*nak_ok=*/1) != 0) {
+                g_usbnet.rx_errors++;
+                return;
+            }
+
+            if (got == 0) {
+                g_usbnet.rx_naks++;
+                return;
+            }
+
+            g_usbnet.rx_usb_xfers++;
+            g_usbnet.rx_usb_bytes += got;
+            g_usbnet.last_got = got;
+
+            g_usbnet.in_pid = (g_usbnet.in_pid == USB_PID_DATA0) ? USB_PID_DATA1 : USB_PID_DATA0;
             netif_rx_frame(&g_usbnet.nif, buf, (size_t)got);
         }
     }
