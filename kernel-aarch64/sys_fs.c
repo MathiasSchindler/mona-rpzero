@@ -14,6 +14,7 @@
 #include "vfs.h"
 
 #define AT_FDCWD ((int64_t)-100)
+#include "pmm.h"
 
 /* openat(2) flags (minimal subset). */
 #define O_RDONLY 0u
@@ -497,7 +498,7 @@ uint64_t sys_openat(int64_t dirfd, uint64_t pathname_user, uint64_t flags, uint6
         return (uint64_t)(-(int64_t)EINVAL);
     }
 
-    /* Minimal procfs: /proc (dir) and /proc/ps (file). */
+    /* Minimal procfs: /proc (dir), /proc/ps and /proc/meminfo (files). */
     if (cstr_eq_u64(path, "/proc") || cstr_eq_u64(path, "/proc/")) {
         uint64_t acc = flags & (uint64_t)O_ACCMODE;
         if (acc != (uint64_t)O_RDONLY) {
@@ -538,6 +539,31 @@ uint64_t sys_openat(int64_t dirfd, uint64_t pathname_user, uint64_t flags, uint6
         d->kind = FDESC_PROC;
         d->refs = 1;
         d->u.proc.node = 2u;
+        d->u.proc.off = 0;
+
+        int fd = fd_alloc_into(&cur->fdt, 3, didx);
+        desc_decref(didx);
+        if (fd < 0) {
+            return (uint64_t)(-(int64_t)EMFILE);
+        }
+        return (uint64_t)fd;
+    }
+
+    if (cstr_eq_u64(path, "/proc/meminfo")) {
+        uint64_t acc = flags & (uint64_t)O_ACCMODE;
+        if (acc != (uint64_t)O_RDONLY) {
+            return (uint64_t)(-(int64_t)EROFS);
+        }
+
+        int didx = desc_alloc();
+        if (didx < 0) {
+            return (uint64_t)(-(int64_t)EMFILE);
+        }
+        file_desc_t *d = &g_descs[didx];
+        desc_clear(d);
+        d->kind = FDESC_PROC;
+        d->refs = 1;
+        d->u.proc.node = 3u;
         d->u.proc.off = 0;
 
         int fd = fd_alloc_into(&cur->fdt, 3, didx);
@@ -841,6 +867,44 @@ retry_first_byte:
         return n;
     }
 
+    if (d->kind == FDESC_PROC && d->u.proc.node == 3u) {
+        /* /proc/meminfo: minimal Linux-like snapshot backed by PMM stats. */
+        char out[256];
+        uint64_t pos = 0;
+
+        pmm_info_t pi = pmm_info();
+        uint64_t total_bytes = pi.total_pages * pi.page_size;
+        uint64_t free_bytes = pi.free_pages * pi.page_size;
+        uint64_t total_kb = total_bytes / 1024ull;
+        uint64_t free_kb = free_bytes / 1024ull;
+
+        buf_puts(out, sizeof(out), &pos, "MemTotal: ");
+        buf_put_u64(out, sizeof(out), &pos, total_kb);
+        buf_puts(out, sizeof(out), &pos, " kB\n");
+
+        buf_puts(out, sizeof(out), &pos, "MemFree: ");
+        buf_put_u64(out, sizeof(out), &pos, free_kb);
+        buf_puts(out, sizeof(out), &pos, " kB\n");
+
+        /* For now treat "available" as "free" (no cache/buffers tracked). */
+        buf_puts(out, sizeof(out), &pos, "MemAvailable: ");
+        buf_put_u64(out, sizeof(out), &pos, free_kb);
+        buf_puts(out, sizeof(out), &pos, " kB\n");
+
+        if (pos < sizeof(out)) out[pos] = '\0';
+
+        if (d->u.proc.off >= pos) return 0;
+        uint64_t remain = pos - d->u.proc.off;
+        uint64_t n = (len < remain) ? len : remain;
+        volatile uint8_t *dst = (volatile uint8_t *)(uintptr_t)buf_user;
+        const uint8_t *src = (const uint8_t *)out + d->u.proc.off;
+        for (uint64_t i = 0; i < n; i++) {
+            dst[i] = src[i];
+        }
+        d->u.proc.off += n;
+        return n;
+    }
+
     if (d->kind != FDESC_INITRAMFS) {
         return (uint64_t)(-(int64_t)EBADF);
     }
@@ -1004,6 +1068,7 @@ uint64_t sys_getdents64(uint64_t fd, uint64_t dirp_user, uint64_t count) {
         (void)dents_emit_cb(".", S_IFDIR, &dc);
         (void)dents_emit_cb("..", S_IFDIR, &dc);
         (void)dents_emit_cb("ps", S_IFREG, &dc);
+        (void)dents_emit_cb("meminfo", S_IFREG, &dc);
 
         if (dc.emitted > dc.skip) {
             d->u.proc.off = dc.emitted;
@@ -1259,6 +1324,13 @@ uint64_t sys_newfstatat(int64_t dirfd, uint64_t pathname_user, uint64_t statbuf_
         st->st_size = 0;
         return 0;
     }
+    if (cstr_eq_u64(path, "/proc/meminfo")) {
+        linux_stat_t *st = (linux_stat_t *)(uintptr_t)statbuf_user;
+        st->st_mode = S_IFREG | 0444u;
+        st->st_nlink = 1;
+        st->st_size = 0;
+        return 0;
+    }
 
     const uint8_t *data = 0;
     uint64_t size = 0;
@@ -1318,7 +1390,8 @@ uint64_t sys_fchmodat(int64_t dirfd, uint64_t pathname_user, uint64_t mode, uint
     }
 
     /* procfs is read-only. */
-    if (cstr_eq_u64(path, "/proc") || cstr_eq_u64(path, "/proc/") || cstr_eq_u64(path, "/proc/ps")) {
+    if (cstr_eq_u64(path, "/proc") || cstr_eq_u64(path, "/proc/") || cstr_eq_u64(path, "/proc/ps") ||
+        cstr_eq_u64(path, "/proc/meminfo")) {
         return (uint64_t)(-(int64_t)EROFS);
     }
 

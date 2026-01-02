@@ -54,7 +54,7 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | sed | Partial | 4 |
 | uniq | Partial | 4 |
 | chown | Planned | 0 |
-| free | Planned | 0 |
+| free | Done | 2 |
 | more | Planned | 0 |
 | seq | Partial | 3 |
 | uptime | Done | 2 |
