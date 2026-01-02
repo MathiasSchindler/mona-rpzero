@@ -10,6 +10,8 @@
 #   GFX=0|1            (default: 1)
 #   USB_KBD=0|1        (default: 1)
 #   USB_NET=0|1        (default: 0)  # when USB_KBD=1 we default this off for deterministic enum
+#   USB_NET_BACKEND=user|tap (default: user)
+#   TAP_IF=name         (default: mona0)  # only used when USB_NET_BACKEND=tap
 #   SERIAL=stdio|vc|null  (default: stdio)
 #   MONITOR=none|stdio|vc (default: none)
 #   USB_KBD_DEBUG=0|1  (default: 0)  # enables extra kernel USB debug logs
@@ -61,6 +63,8 @@ USERPROG ?= init
 GFX ?= 1
 USB_KBD ?= 1
 USB_NET ?= 0
+USB_NET_BACKEND ?= user
+TAP_IF ?= mona0
 SERIAL ?= stdio
 MONITOR ?= none
 USB_KBD_DEBUG ?= 0
@@ -95,7 +99,7 @@ aarch64-kernel: userland
 
 run: userland
 	@echo "Starting QEMU (raspi3b) interactive run"
-	@echo "  GFX=$(GFX) USB_KBD=$(USB_KBD) USB_NET=$(USB_NET) SERIAL=$(SERIAL) MONITOR=$(MONITOR)"
+	@echo "  GFX=$(GFX) USB_KBD=$(USB_KBD) USB_NET=$(USB_NET) USB_NET_BACKEND=$(USB_NET_BACKEND) TAP_IF=$(TAP_IF) SERIAL=$(SERIAL) MONITOR=$(MONITOR)"
 	@if [[ -z "$(DTB)" ]]; then \
 		echo "No DTB found. Put one into out/ or archive/, or pass DTB=..." >&2; \
 		echo "Tried: $(DTB_CANDIDATES)" >&2; \
@@ -115,7 +119,12 @@ run: userland
 	if [[ "$(GFX)" == "1" ]]; then \
 		args+=( --gfx --display "$(QEMU_DISPLAY)" --serial "$(SERIAL)" --monitor "$(MONITOR)" ); \
 	fi; \
-	if [[ "$(USB_NET)" == "0" ]]; then args+=( --no-usb-net ); fi; \
+	if [[ "$(USB_NET)" == "0" ]]; then \
+		args+=( --no-usb-net ); \
+	else \
+		args+=( --usb-net-backend "$(USB_NET_BACKEND)" ); \
+		if [[ "$(USB_NET_BACKEND)" == "tap" ]]; then args+=( --tap-if "$(TAP_IF)" ); fi; \
+	fi; \
 	if [[ "$(USB_KBD)" == "1" ]]; then args+=( --usb-kbd ); fi; \
 	set +e; bash tools/run-qemu-raspi3b.sh "$${args[@]}"; rc=$$?; if [[ $$rc -eq 0 || $$rc -eq 112 || $$rc -eq 128 ]]; then exit 0; fi; exit $$rc
 

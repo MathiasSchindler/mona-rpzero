@@ -10,6 +10,8 @@ Usage:
     --dtb path/to/bcm2710-rpi-3-b.dtb \
     [--usb-kbd] \
     [--no-usb-net] \
+    [--usb-net-backend user|tap] \
+    [--tap-if name] \
     [--serial stdio|vc|null] \
     [--monitor none|stdio|vc] \
     --append "console=ttyAMA0 root=/dev/mmcblk0p2 rootwait"
@@ -43,6 +45,8 @@ SERIAL_BACKEND=""
 MONITOR_BACKEND=""
 USB_KBD=0
 USB_NET=1
+USB_NET_BACKEND="user"
+TAP_IF=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -55,6 +59,8 @@ while [[ $# -gt 0 ]]; do
     --display) DISPLAY_BACKEND="$2"; GFX=1; shift 2;;
     --usb-kbd) USB_KBD=1; shift;;
     --no-usb-net) USB_NET=0; shift;;
+    --usb-net-backend) USB_NET_BACKEND="$2"; shift 2;;
+    --tap-if) TAP_IF="$2"; shift 2;;
     --serial) SERIAL_BACKEND="$2"; shift 2;;
     --monitor) MONITOR_BACKEND="$2"; shift 2;;
     -h|--help) usage; exit 0;;
@@ -147,8 +153,24 @@ if [[ -n "$APPEND" ]]; then
 fi
 
 if [[ "$USB_NET" -eq 1 ]]; then
-  # Optional: user-mode networking (works for Linux userland; your own kernel will need a driver)
-  cmd+=( -netdev user,id=net0 -device usb-net,netdev=net0 )
+  case "$USB_NET_BACKEND" in
+    user)
+      # Optional: user-mode networking. Enable IPv6 explicitly.
+      cmd+=( -netdev user,id=net0,ipv6=on -device usb-net,netdev=net0 )
+      ;;
+    tap)
+      if [[ -z "$TAP_IF" ]]; then
+        echo "--usb-net-backend tap requires --tap-if <name>" >&2
+        exit 2
+      fi
+      # Host TAP networking for realistic L2 IPv6 tests (RA/SLAAC/NDP).
+      cmd+=( -netdev tap,id=net0,ifname="$TAP_IF",script=no,downscript=no -device usb-net,netdev=net0 )
+      ;;
+    *)
+      echo "Unknown --usb-net-backend: $USB_NET_BACKEND (expected: user|tap)" >&2
+      exit 2
+      ;;
+  esac
 fi
 
 if [[ "$USB_KBD" -eq 1 ]]; then
