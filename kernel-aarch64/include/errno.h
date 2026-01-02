@@ -31,3 +31,4 @@
 #define EMSGSIZE 90ull
 #define EAFNOSUPPORT 97ull
 #define ETIMEDOUT 110ull
+#define ENETUNREACH 101ull

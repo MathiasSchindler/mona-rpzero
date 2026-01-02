@@ -36,6 +36,14 @@ struct netif {
     uint8_t ipv6_ll[16];
     uint8_t ipv6_ll_valid;
 
+    /* Phase 4: minimal RA/SLAAC state (best-effort). */
+    uint8_t ipv6_global[16];
+    uint8_t ipv6_global_valid;
+    uint8_t ipv6_prefix[16];
+    uint8_t ipv6_prefix_len; /* 0 means unset. */
+    uint8_t ipv6_router_ll[16];
+    uint8_t ipv6_router_valid;
+
     const netif_ops_t *ops;
     void *driver_ctx;
 
