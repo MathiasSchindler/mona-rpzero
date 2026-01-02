@@ -1145,8 +1145,36 @@ void net_ipv6_input(netif_t *nif, const uint8_t src_mac[6], const uint8_t *pkt, 
 
     const uint8_t *payload = pkt + sizeof(ipv6_hdr_t);
     size_t pl_len = (size_t)payload_len;
+    uint8_t next_header = ip6->next_header;
 
-    if (ip6->next_header == IPV6_NH_UDP) {
+    /* Skip Hop-by-Hop Options (0) if present. */
+    if (next_header == 0) {
+        if (pl_len < 8) {
+            nif->rx_drops++;
+            g_ipv6_dbg.rx_drop_short++;
+            return;
+        }
+        /* RFC 8200: Hdr Ext Len is in 8-octet units, not including the first 8 octets. */
+        uint8_t hdr_ext_len = payload[1];
+        size_t ext_len = ((size_t)hdr_ext_len + 1) * 8;
+        if (pl_len < ext_len) {
+            nif->rx_drops++;
+            g_ipv6_dbg.rx_drop_len++;
+            return;
+        }
+
+        if (IPV6_DEBUG_RX) {
+            uart_write("ipv6: skip HBH len=");
+            uart_write_hex_u64(ext_len);
+            uart_write("\n");
+        }
+
+        next_header = payload[0];
+        payload += ext_len;
+        pl_len -= ext_len;
+    }
+
+    if (next_header == IPV6_NH_UDP) {
         g_ipv6_dbg.rx_udp++;
         if (pl_len < sizeof(udp_hdr_t)) {
             nif->rx_drops++;
@@ -1198,9 +1226,9 @@ void net_ipv6_input(netif_t *nif, const uint8_t src_mac[6], const uint8_t *pkt, 
         return;
     }
 
-    if (ip6->next_header != IPV6_NH_ICMPV6) {
+    if (next_header != IPV6_NH_ICMPV6) {
         uart_write("ipv6: drop unknown nh=");
-        uart_write_hex_u64(ip6->next_header);
+        uart_write_hex_u64(next_header);
         uart_write("\n");
         /* Only ICMPv6 for now. */
         return;

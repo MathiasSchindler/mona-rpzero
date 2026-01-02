@@ -14,7 +14,7 @@ extern "C" {
  */
 
 enum {
-    UDP6_MAX_PAYLOAD = 1200,
+    UDP6_MAX_PAYLOAD = 1500,
 };
 
 typedef struct {

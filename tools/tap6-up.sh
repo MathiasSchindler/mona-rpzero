@@ -101,7 +101,8 @@ ra-param=$IFNAME,${RA_MIN_S},${RA_MAX_S}
 # Use the interface address/prefix as the advertised /64.
 dhcp-range=::,constructor:$IFNAME,slaac,64,10m
 # Advertise the DNS server via RDNSS (RFC 8106).
-dhcp-option=option6:dns-server,[$HOST_IP]
+# Defaults to the host TAP IP, but can be overridden (e.g. Google DNS).
+dhcp-option=option6:dns-server,${MONA_DNS_SERVERS:-[$HOST_IP]}
 # Use host resolv.conf by default (do not set no-resolv)
 domain-needed
 bogus-priv

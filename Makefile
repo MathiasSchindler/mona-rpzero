@@ -81,6 +81,8 @@ MONITOR ?= none
 USB_KBD_DEBUG ?= 0
 USB_NET_DEBUG ?= 0
 IPV6_DEBUG_RX ?= 0
+NAT66 ?= 1
+DNS_SERVERS ?= [2001:4860:4860::8888],[2001:4860:4860::8844]
 
 
 .PHONY: all run test test-net6 clean help
@@ -155,12 +157,14 @@ run: userland
 		: "Optional: bring up TAP IPv6 router automatically so guest has networking."; \
 	tap_did_up=0; \
 	if [[ "$(USB_NET)" == "1" && "$(USB_NET_BACKEND)" == "tap" && "$(TAP_AUTO_UP)" == "1" ]]; then \
+		nat66="$${MONA_ENABLE_NAT66:-$(NAT66)}"; \
+		dns_servers="$${MONA_DNS_SERVERS:-$(DNS_SERVERS)}"; \
 		wan_if="$${MONA_WAN_IF:-}"; \
-		if [[ "$${MONA_ENABLE_NAT66:-0}" == "1" && -z "$$wan_if" ]]; then \
+		if [[ "$$nat66" == "1" && -z "$$wan_if" ]]; then \
 			wan_if="$$(ip route show default 2>/dev/null | awk '{print $$5; exit}')"; \
 		fi; \
-		echo "Auto TAP: bringing up $(TAP_IF) (MONA_TAP_DEBUG=$${MONA_TAP_DEBUG:-0} MONA_ENABLE_NAT66=$${MONA_ENABLE_NAT66:-0} MONA_WAN_IF=$$wan_if)"; \
-		MONA_WAN_IF="$$wan_if" $(SUDO) env MONA_TAP_DEBUG="$${MONA_TAP_DEBUG:-0}" MONA_ENABLE_NAT66="$${MONA_ENABLE_NAT66:-0}" MONA_WAN_IF="$$wan_if" tools/tap6-up.sh "$(TAP_IF)"; \
+		echo "Auto TAP: bringing up $(TAP_IF) (NAT66=$$nat66 DNS=$$dns_servers)"; \
+		MONA_WAN_IF="$$wan_if" $(SUDO) env MONA_TAP_DEBUG="$${MONA_TAP_DEBUG:-0}" MONA_ENABLE_NAT66="$$nat66" MONA_WAN_IF="$$wan_if" MONA_DNS_SERVERS="$$dns_servers" tools/tap6-up.sh "$(TAP_IF)"; \
 		tap_did_up=1; \
 	fi; \
 	\

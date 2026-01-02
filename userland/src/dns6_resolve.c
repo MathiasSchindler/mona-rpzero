@@ -10,7 +10,7 @@
 
 enum {
     DNS_PORT = 53,
-    DNS_MAX_MSG = 512,
+    DNS_MAX_MSG = 1500,
 };
 
 typedef struct __attribute__((packed)) {

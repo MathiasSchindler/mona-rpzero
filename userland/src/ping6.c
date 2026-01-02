@@ -192,7 +192,14 @@ int main(int argc, char **argv, char **envp) {
         write_ipv6_full(dns_ip);
         write_all("\n");
 
-        int rc = dns6_resolve_aaaa_one(argv[1], dns_ip, timeout_ms, dst);
+        int rc = -1;
+        for (int attempt = 0; attempt < 3; attempt++) {
+            rc = dns6_resolve_aaaa_one(argv[1], dns_ip, timeout_ms, dst);
+            if (rc == 0) break;
+            if (rc != -(int)110) break; /* Don't retry on non-timeout errors (like network unreachable) */
+            write_all("ping6: resolve timeout, retrying...\n");
+        }
+
         if (rc != 0) {
             write_all("ping6: resolve failed errno=");
             write_u64_dec((uint64_t)(-(int64_t)rc));
