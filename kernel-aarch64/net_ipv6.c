@@ -762,6 +762,7 @@ static int send_neighbor_solicitation(netif_t *nif, const uint8_t target_ip[16])
     body[4 + 16 + 1] = 1;
     memcpy_u8(body + 4 + 16 + 2, nif->mac, 6);
 
+    g_ipv6_dbg.tx_icmpv6_ns++;
     return ipv6_send_icmp(nif, /*src_ip_opt=*/0, dst_ip, dst_mac, /*hop_limit=*/255, ICMPV6_NEIGHBOR_SOLICIT, 0, body, sizeof(body));
 }
 
@@ -805,6 +806,7 @@ static int send_router_solicitation(netif_t *nif) {
     body[4 + 1] = 1;
     memcpy_u8(body + 4 + 2, nif->mac, 6);
 
+    g_ipv6_dbg.tx_icmpv6_rs++;
     return ipv6_send_icmp(nif, /*src_ip_opt=*/0, dst_ip, dst_mac, /*hop_limit=*/255, ICMPV6_ROUTER_SOLICIT, 0, body, sizeof(body));
 }
 
@@ -815,6 +817,7 @@ static int send_echo_request(netif_t *nif, const uint8_t dst_ip[16], const uint8
     be16_store(body + 2, seq);
     for (size_t i = 0; i < 32; i++) body[4 + i] = (uint8_t)('A' + (i % 26));
 
+    g_ipv6_dbg.tx_icmpv6_echo_req++;
     return ipv6_send_icmp(nif, /*src_ip_opt=*/0, dst_ip, dst_mac, /*hop_limit=*/64, ICMPV6_ECHO_REQUEST, 0, body, sizeof(body));
 }
 
@@ -873,6 +876,8 @@ int net_ipv6_ping6_start(int proc_idx, netif_t *nif, const uint8_t dst_ip[16], u
     if (!nif || !dst_ip) return -(int)EINVAL;
     if (proc_idx < 0 || proc_idx >= (int)MAX_PROCS) return -(int)EINVAL;
 
+    g_ipv6_dbg.ping6_start_calls++;
+
     if (!nif->ipv6_ll_valid) {
         /* Ensure we have a link-local address and send an RS to trigger SLAAC. */
         net_ipv6_configure_netif(nif);
@@ -893,11 +898,13 @@ int net_ipv6_ping6_start(int proc_idx, netif_t *nif, const uint8_t dst_ip[16], u
                     nif->ipv6_last_rs_ns = now;
                 }
             }
+            g_ipv6_dbg.ping6_start_eagain++;
             return -(int)EAGAIN;
         }
     }
 
     if (g_ping_inflight) {
+        g_ipv6_dbg.ping6_start_ebusy++;
         return -(int)EBUSY;
     }
 
@@ -929,6 +936,7 @@ int net_ipv6_ping6_start(int proc_idx, netif_t *nif, const uint8_t dst_ip[16], u
         proc_t *p = &g_procs[proc_idx];
         p->ping6_start_ns = time_now_ns();
         g_ping_phase = 2;
+        g_ipv6_dbg.ping6_start_sent_echo++;
         return send_echo_request(nif, dst_ip, mac, ident, seq);
     }
 
@@ -937,6 +945,7 @@ int net_ipv6_ping6_start(int proc_idx, netif_t *nif, const uint8_t dst_ip[16], u
         proc_t *p = &g_procs[proc_idx];
         p->ping6_start_ns = time_now_ns();
         g_ping_phase = 2;
+        g_ipv6_dbg.ping6_start_sent_echo++;
         return send_echo_request(nif, dst_ip, mac, ident, seq);
     }
 
@@ -947,12 +956,14 @@ int net_ipv6_ping6_start(int proc_idx, netif_t *nif, const uint8_t dst_ip[16], u
             proc_t *p = &g_procs[proc_idx];
             p->ping6_start_ns = time_now_ns();
             g_ping_phase = 2;
+            g_ipv6_dbg.ping6_start_sent_echo++;
             return send_echo_request(nif, dst_ip, mac, ident, seq);
         }
     }
 
     /* Neighbor unknown: start NDP. */
     g_ping_phase = 1;
+    g_ipv6_dbg.ping6_start_sent_ns++;
     return send_neighbor_solicitation(nif, nh_ip);
 }
 
@@ -1200,9 +1211,15 @@ void net_ipv6_input(netif_t *nif, const uint8_t src_mac[6], const uint8_t *pkt, 
             opt_len -= opt_bytes;
         }
 
-        /* If it's for us, reply with NA. */
-        if (memeq(target, nif->ipv6_ll, 16) || (nif->ipv6_global_valid && memeq(target, nif->ipv6_global, 16))) {
-            (void)send_neighbor_advertisement(nif, ip6->src, src_mac, nif->ipv6_ll);
+        /* If it's for us, reply with NA (for the exact target being queried). */
+        const uint8_t *our_target = 0;
+        if (memeq(target, nif->ipv6_ll, 16)) {
+            our_target = nif->ipv6_ll;
+        } else if (nif->ipv6_global_valid && memeq(target, nif->ipv6_global, 16)) {
+            our_target = nif->ipv6_global;
+        }
+        if (our_target) {
+            (void)send_neighbor_advertisement(nif, ip6->src, src_mac, our_target);
         }
         return;
     }

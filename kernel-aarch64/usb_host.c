@@ -1,5 +1,7 @@
 #include "usb_host.h"
 
+#include "cache.h"
+
 #include "mmu.h"
 #include "time.h"
 #include "uart_pl011.h"
@@ -217,6 +219,42 @@ static int hc_wait_xfer(uint32_t ch, uint64_t timeout_ns) {
     }
 }
 
+static int hc_wait_in_xfer(uint32_t ch, uint64_t timeout_ns, int nak_ok) {
+    /* For polled IN endpoints, NAK is an expected “no data yet” state.
+     * If nak_ok is set, keep the channel running and clear NAK interrupts so
+     * the controller can retry and eventually complete the transfer.
+     */
+    uint64_t dl = deadline_ns(timeout_ns);
+    for (;;) {
+        uint32_t ints = *dwc2_reg(HCINT(ch));
+
+        if (ints & (HCINT_STALL | HCINT_XACTERR | HCINT_BBLERR | HCINT_FRMOVRUN | HCINT_DATATGLERR)) {
+            return (int)ints;
+        }
+
+        if (ints & HCINT_XFERCOMPL) {
+            return (int)ints;
+        }
+
+        if (ints & HCINT_CHHLTD) {
+            /* Halted without completion; treat like an error unless NAK-only polling timed out. */
+            return (int)ints;
+        }
+
+        if (ints & HCINT_NAK) {
+            if (!nak_ok) {
+                return (int)ints;
+            }
+            /* Clear NAK and keep waiting so HW can retry. */
+            *dwc2_reg(HCINT(ch)) = HCINT_NAK;
+        }
+
+        if (!time_before_deadline(dl)) {
+            return -1;
+        }
+    }
+}
+
 static void hc_halt(uint32_t ch) {
     uint32_t hcchar = *dwc2_reg(HCCHAR(ch));
     hcchar |= HCCHAR_CHDIS;
@@ -249,6 +287,10 @@ static int dwc2_out_xfer(uint32_t ch, uint8_t dev_addr, uint8_t ep, uint8_t ep_t
     *dwc2_reg(HCTSIZ(ch)) = hctsiz;
 
 #if USB_USE_DMA
+    if (len && data) {
+        /* Ensure device sees latest bytes. */
+        cache_clean_dcache_for_range((uint64_t)(uintptr_t)data, (uint64_t)len);
+    }
     *dwc2_reg(HCDMA(ch)) = (uint32_t)usb_virt_to_phys(data);
 #else
     (void)dwc2_fifo;
@@ -302,6 +344,10 @@ static int dwc2_in_xfer(uint32_t ch, uint8_t dev_addr, uint8_t ep, uint8_t ep_ty
     *dwc2_reg(HCTSIZ(ch)) = hctsiz;
 
 #if USB_USE_DMA
+    if (len && out) {
+        /* Drop any stale cache lines before device DMA writes into this buffer. */
+        cache_invalidate_dcache_for_range((uint64_t)(uintptr_t)out, (uint64_t)len);
+    }
     *dwc2_reg(HCDMA(ch)) = (uint32_t)usb_virt_to_phys(out);
 #endif
 
@@ -310,10 +356,15 @@ static int dwc2_in_xfer(uint32_t ch, uint8_t dev_addr, uint8_t ep, uint8_t ep_ty
     hcchar &= ~HCCHAR_CHDIS;
     *dwc2_reg(HCCHAR(ch)) = hcchar;
 
-    int rc = hc_wait_xfer(ch, 200000000ull);
+    /* If polling and NAKs are allowed, wait only briefly.
+     * This gives the controller time to retry after NAK without stalling the kernel.
+     */
+    uint64_t wait_ns = nak_ok ? 2000000ull : 200000000ull;
+    int rc = hc_wait_in_xfer(ch, wait_ns, nak_ok);
     if (rc < 0) {
         hc_halt(ch);
-        return -1;
+        if (out_got) *out_got = 0;
+        return nak_ok ? 0 : -1;
     }
     if (rc & HCINT_NAK) {
         hc_halt(ch);

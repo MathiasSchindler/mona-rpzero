@@ -8,6 +8,11 @@ extern "C" {
 #endif
 
 typedef struct {
+	/* RX polling / bus-level outcomes */
+	uint64_t rx_poll_calls;
+	uint64_t rx_naks;
+	uint64_t rx_errors;
+
 	uint64_t rx_usb_xfers;
 	uint64_t rx_usb_bytes;
 

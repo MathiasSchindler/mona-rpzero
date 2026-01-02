@@ -35,6 +35,10 @@ typedef struct {
     /* Debug counters for RX path diagnosis (especially RNDIS). */
     uint64_t rx_usb_xfers;
     uint64_t rx_usb_bytes;
+
+    uint64_t rx_poll_calls;
+    uint64_t rx_naks;
+    uint64_t rx_errors;
     uint64_t rx_rndis_ok;
     uint64_t rx_rndis_drop_small;
     uint64_t rx_rndis_drop_type;
@@ -45,16 +49,33 @@ typedef struct {
     uint32_t last_data_len;
     uint16_t last_ethertype;
 
+
     netif_t nif;
 } usb_net_state_t;
 
 static usb_net_state_t g_usbnet;
 
 static int usbnet_tx_frame(netif_t *nif, const uint8_t *frame, size_t len);
+static int usbnet_set_multicast_list(netif_t *nif, const uint8_t *macs, size_t mac_count);
+static int rndis_set_multicast_list(usb_net_state_t *st, const uint8_t *macs, uint32_t mac_count);
 
 static const netif_ops_t g_usbnet_ops = {
     .tx_frame = usbnet_tx_frame,
+    .set_multicast_list = usbnet_set_multicast_list,
 };
+
+static int usbnet_set_multicast_list(netif_t *nif, const uint8_t *macs, size_t mac_count) {
+    (void)nif;
+    if (!g_usbnet.bound) return -1;
+    if (g_usbnet.mode != USBNET_MODE_RNDIS) return 0;
+    if (mac_count > 10) return -1;
+
+    if (rndis_set_multicast_list(&g_usbnet, macs, (uint32_t)mac_count) != 0) {
+        uart_write("usb-net: WARN: rndis set multicast list failed\n");
+        return -1;
+    }
+    return 0;
+}
 
 static int usbnet_tx_frame(netif_t *nif, const uint8_t *frame, size_t len) {
     (void)nif;
@@ -65,7 +86,7 @@ static int usbnet_tx_frame(netif_t *nif, const uint8_t *frame, size_t len) {
 
     const uint8_t *payload = frame;
     uint32_t payload_len = (uint32_t)len;
-    uint8_t rndis_buf[2048 + 64];
+    uint8_t rndis_buf[2048 + 64] __attribute__((aligned(64)));
 
     if (g_usbnet.mode == USBNET_MODE_RNDIS) {
         /* Wrap the Ethernet frame in a RNDIS_PACKET_MSG. */
@@ -170,6 +191,8 @@ static void usbnet_delay_ns(uint64_t ns) {
 
 #define OID_GEN_CURRENT_PACKET_FILTER 0x0001010Eu
 #define OID_802_3_CURRENT_ADDRESS     0x01010102u
+/* Required by some implementations to receive IPv6 multicast (e.g. solicited-node). */
+#define OID_802_3_MULTICAST_LIST      0x01010103u
 
 /* NDIS packet filter bits (OID_GEN_CURRENT_PACKET_FILTER). */
 #define RNDIS_PACKET_TYPE_DIRECTED     0x00000001u
@@ -345,6 +368,39 @@ static int rndis_set_packet_filter(usb_net_state_t *st, uint32_t filter) {
     return 0;
 }
 
+static int rndis_set_multicast_list(usb_net_state_t *st, const uint8_t *macs, uint32_t mac_count) {
+    if (!st || !st->has_ctrl_if) return -1;
+    if (!macs && mac_count != 0) return -1;
+
+    uint32_t info_len = mac_count * 6u;
+    if (info_len > 64u) return -1;
+
+    uint8_t buf[sizeof(rndis_set_msg_t) + 64u];
+    rndis_set_msg_t *h = (rndis_set_msg_t *)buf;
+
+    h->msg_type = RNDIS_MSG_SET;
+    h->msg_len = (uint32_t)(sizeof(rndis_set_msg_t) + info_len);
+    h->request_id = ++st->rndis_request_id;
+    h->oid = OID_802_3_MULTICAST_LIST;
+    h->info_len = info_len;
+    h->info_offset = 20; /* sizeof(rndis_set_msg_t)=28 => 28-8 */
+    h->dev_vc_handle = 0;
+
+    for (uint32_t i = 0; i < info_len; i++) {
+        buf[sizeof(rndis_set_msg_t) + i] = macs[i];
+    }
+
+    if (rndis_send_cmd(st->addr, st->low_speed, st->ctrl_if_num, buf, (uint16_t)h->msg_len) != 0) return -1;
+
+    rndis_set_cmplt_t resp;
+    uint32_t got = 0;
+    if (rndis_wait_for_msg(st->addr, st->low_speed, st->ctrl_if_num, RNDIS_MSG_SET_CMPL, &resp, (uint16_t)sizeof(resp), &got) != 0) return -1;
+    if (got < sizeof(resp)) return -1;
+    if (resp.request_id != h->request_id) return -1;
+    if (resp.status != RNDIS_STATUS_SUCCESS) return -1;
+    return 0;
+}
+
 static int rndis_query(usb_net_state_t *st, uint32_t oid, void *out, uint32_t out_len, uint32_t *out_got) {
     rndis_query_msg_t m;
     m.msg_type = RNDIS_MSG_QUERY;
@@ -398,9 +454,14 @@ static uint16_t be16(const uint8_t *p) {
 
 static int looks_like_ipv6_eth_frame(const uint8_t *frame, uint32_t frame_len) {
     if (!frame) return 0;
-    if (frame_len < 14u) return 0;
+    if (frame_len < 14u + 40u) return 0;
     /* EtherType at bytes 12..13. */
-    return be16(frame + 12) == 0x86DDu;
+    if (be16(frame + 12) != 0x86DDu) return 0;
+    /* IPv6 version nibble at start of L3 header. */
+    if (((frame[14] >> 4) & 0x0Fu) != 6u) return 0;
+    /* Next Header field in IPv6 header (byte offset 6 from L3 start). */
+    uint8_t nh = frame[14 + 6];
+    return (nh == 58u /* ICMPv6 */) || (nh == 17u /* UDP */);
 }
 
 static int parse_cdc_ecm(const usb_device_t *dev, cdc_ecm_info_t *out) {
@@ -636,77 +697,92 @@ int usb_net_try_bind(const usb_device_t *dev) {
 void usb_net_poll(void) {
     if (!g_usbnet.bound) return;
 
-    uint8_t buf[2048];
-    uint32_t got = 0;
+    /* Drain a small batch of packets per poll call.
+     * This reduces RX starvation when the host bursts frames (RAs, NDP, ping replies).
+     */
+    for (int iter = 0; iter < 16; iter++) {
+        g_usbnet.rx_poll_calls++;
 
-    if (usb_host_in_xfer(g_usbnet.addr, g_usbnet.low_speed, g_usbnet.ep_in, g_usbnet.in_pid,
-                         buf, sizeof(buf), &got, /*nak_ok=*/1) != 0) {
-        return;
-    }
+        uint8_t buf[2048] __attribute__((aligned(64)));
+        uint32_t got = 0;
 
-    if (got == 0) return;
-
-    g_usbnet.rx_usb_xfers++;
-    g_usbnet.rx_usb_bytes += got;
-    g_usbnet.last_got = got;
-
-    /* Toggle PID only on successful (non-NAK) transactions with data. */
-    g_usbnet.in_pid = (g_usbnet.in_pid == USB_PID_DATA0) ? USB_PID_DATA1 : USB_PID_DATA0;
-
-    if (g_usbnet.mode == USBNET_MODE_RNDIS) {
-        if (got < sizeof(rndis_packet_msg_t)) {
-            g_usbnet.rx_rndis_drop_small++;
-            return;
-        }
-        rndis_packet_msg_t *p = (rndis_packet_msg_t *)buf;
-        g_usbnet.last_msg_type = p->msg_type;
-        if (p->msg_type != 0x00000001u) {
-            g_usbnet.rx_rndis_drop_type++;
+        if (usb_host_in_xfer(g_usbnet.addr, g_usbnet.low_speed, g_usbnet.ep_in, g_usbnet.in_pid,
+                             buf, sizeof(buf), &got, /*nak_ok=*/1) != 0) {
+            g_usbnet.rx_errors++;
             return;
         }
 
-        uint32_t data_len = p->data_len;
-        uint32_t data_off = p->data_offset;
+        if (got == 0) {
+            g_usbnet.rx_naks++;
+            return;
+        }
 
-        g_usbnet.last_data_len = data_len;
-        g_usbnet.last_data_off = data_off;
+        g_usbnet.rx_usb_xfers++;
+        g_usbnet.rx_usb_bytes += got;
+        g_usbnet.last_got = got;
 
-        /* RNDIS quirk tolerance:
-         * - Spec: DataOffset is from the start of the DataOffset field (offset 8).
-         * - Some implementations appear to treat it as from the start of the message.
-         * Try both and pick the one that looks like an Ethernet frame.
-         */
-        uint8_t *cand1 = buf + 8u + data_off;
-        uint8_t *cand2 = buf + data_off;
+        /* Toggle PID only on successful (non-NAK) transactions with data. */
+        g_usbnet.in_pid = (g_usbnet.in_pid == USB_PID_DATA0) ? USB_PID_DATA1 : USB_PID_DATA0;
 
-        uint8_t *data = 0;
-        if ((uint64_t)(cand1 - buf) + data_len <= got && looks_like_ipv6_eth_frame(cand1, data_len)) {
-            data = cand1;
-        } else if ((uint64_t)(cand2 - buf) + data_len <= got && looks_like_ipv6_eth_frame(cand2, data_len)) {
-            data = cand2;
-        } else {
-            /* Fallback: keep the original spec interpretation if in-bounds. */
-            if ((uint64_t)(cand1 - buf) + data_len <= got) data = cand1;
-            else if ((uint64_t)(cand2 - buf) + data_len <= got) data = cand2;
-            else {
-                g_usbnet.rx_rndis_drop_bounds++;
-                return;
+        if (g_usbnet.mode == USBNET_MODE_RNDIS) {
+            if (got < sizeof(rndis_packet_msg_t)) {
+                g_usbnet.rx_rndis_drop_small++;
+                continue;
             }
-        }
+            rndis_packet_msg_t *p = (rndis_packet_msg_t *)buf;
+            g_usbnet.last_msg_type = p->msg_type;
+            if (p->msg_type != 0x00000001u) {
+                g_usbnet.rx_rndis_drop_type++;
+                continue;
+            }
 
-        if (data_len >= 14u) {
-            g_usbnet.last_ethertype = be16(data + 12);
-        }
+            uint32_t data_len = p->data_len;
+            uint32_t data_off = p->data_offset;
 
-        g_usbnet.rx_rndis_ok++;
-        netif_rx_frame(&g_usbnet.nif, data, (size_t)data_len);
-    } else {
-        netif_rx_frame(&g_usbnet.nif, buf, (size_t)got);
+            g_usbnet.last_data_len = data_len;
+            g_usbnet.last_data_off = data_off;
+
+            /* RNDIS quirk tolerance:
+             * - Spec: DataOffset is from the start of the DataOffset field (offset 8).
+             * - Some implementations appear to treat it as from the start of the message.
+             * Try both and pick the one that looks like an Ethernet frame.
+             */
+            uint8_t *cand1 = buf + 8u + data_off;
+            uint8_t *cand2 = buf + data_off;
+
+            uint8_t *data = 0;
+            if ((uint64_t)(cand1 - buf) + data_len <= got && looks_like_ipv6_eth_frame(cand1, data_len)) {
+                data = cand1;
+            } else if ((uint64_t)(cand2 - buf) + data_len <= got && looks_like_ipv6_eth_frame(cand2, data_len)) {
+                data = cand2;
+            } else {
+                /* Fallback: keep the original spec interpretation if in-bounds. */
+                if ((uint64_t)(cand1 - buf) + data_len <= got) data = cand1;
+                else if ((uint64_t)(cand2 - buf) + data_len <= got) data = cand2;
+                else {
+                    g_usbnet.rx_rndis_drop_bounds++;
+                    continue;
+                }
+            }
+
+            if (data_len >= 14u) {
+                g_usbnet.last_ethertype = be16(data + 12);
+            }
+
+            g_usbnet.rx_rndis_ok++;
+            netif_rx_frame(&g_usbnet.nif, data, (size_t)data_len);
+        } else {
+            netif_rx_frame(&g_usbnet.nif, buf, (size_t)got);
+        }
     }
 }
 
 int usb_net_get_debug(usb_net_debug_t *out) {
     if (!out || !g_usbnet.bound) return -1;
+
+    out->rx_poll_calls = g_usbnet.rx_poll_calls;
+    out->rx_naks = g_usbnet.rx_naks;
+    out->rx_errors = g_usbnet.rx_errors;
 
     out->rx_usb_xfers = g_usbnet.rx_usb_xfers;
     out->rx_usb_bytes = g_usbnet.rx_usb_bytes;

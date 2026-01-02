@@ -38,6 +38,18 @@ typedef struct {
 	uint64_t rx_icmpv6_echo_req;
 	uint64_t rx_icmpv6_echo_reply;
 
+	/* TX-side observability (best-effort). */
+	uint64_t tx_icmpv6_rs;
+	uint64_t tx_icmpv6_ns;
+	uint64_t tx_icmpv6_echo_req;
+
+	/* ping6_start() path observability (best-effort). */
+	uint64_t ping6_start_calls;
+	uint64_t ping6_start_eagain;
+	uint64_t ping6_start_ebusy;
+	uint64_t ping6_start_sent_echo;
+	uint64_t ping6_start_sent_ns;
+
 	uint8_t last_icmp_type;
 	uint8_t last_hop_limit;
 } net_ipv6_debug_t;

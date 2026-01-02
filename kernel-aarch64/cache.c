@@ -33,6 +33,14 @@ static inline void dc_cvau(uint64_t v) {
     __asm__ volatile("dc cvau, %0" :: "r"(v) : "memory");
 }
 
+static inline void dc_cvac(uint64_t v) {
+    __asm__ volatile("dc cvac, %0" :: "r"(v) : "memory");
+}
+
+static inline void dc_ivac(uint64_t v) {
+    __asm__ volatile("dc ivac, %0" :: "r"(v) : "memory");
+}
+
 static inline uint64_t read_ctr_el0(void) {
     uint64_t v;
     __asm__ volatile("mrs %0, ctr_el0" : "=r"(v));
@@ -194,4 +202,39 @@ void cache_sync_icache_for_range(uint64_t start, uint64_t size) {
     }
     dsb_ish();
     isb();
+}
+
+static uint64_t dcache_line_bytes(void) {
+    uint64_t ctr = read_ctr_el0();
+    uint64_t dminline_words_log2 = (ctr >> 16) & 0xFull;
+    uint64_t dline = 4ull << dminline_words_log2;
+    if (dline < 16) dline = 16;
+    if (dline > 256) dline = 256;
+    return dline;
+}
+
+void cache_clean_dcache_for_range(uint64_t start, uint64_t size) {
+    if (size == 0) return;
+
+    uint64_t line = dcache_line_bytes();
+    uint64_t s = start & ~(line - 1);
+    uint64_t e = (start + size + (line - 1)) & ~(line - 1);
+
+    for (uint64_t p = s; p < e; p += line) {
+        dc_cvac(p);
+    }
+    dsb_ish();
+}
+
+void cache_invalidate_dcache_for_range(uint64_t start, uint64_t size) {
+    if (size == 0) return;
+
+    uint64_t line = dcache_line_bytes();
+    uint64_t s = start & ~(line - 1);
+    uint64_t e = (start + size + (line - 1)) & ~(line - 1);
+
+    for (uint64_t p = s; p < e; p += line) {
+        dc_ivac(p);
+    }
+    dsb_ish();
 }

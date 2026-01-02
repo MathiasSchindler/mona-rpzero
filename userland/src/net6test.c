@@ -144,7 +144,9 @@ static void sleep_ms(uint64_t ms) {
 
 static void dump_proc_net_selected(const char *buf, uint64_t len) {
     const char *usb0 = find_line_starting_with(buf, len, "usb0\t");
+    const char *usbnet_hdr = find_line_starting_with(buf, len, "usbnet\trx_");
     const char *usbnet = find_value_line_starting_with(buf, len, "usbnet");
+    const char *ipv6dbg_hdr = find_line_starting_with(buf, len, "ipv6dbg\trx_");
     const char *ipv6dbg = find_value_line_starting_with(buf, len, "ipv6dbg");
 
     sys_puts("[net6test] /proc/net selected lines:\n");
@@ -165,6 +167,21 @@ static void dump_proc_net_selected(const char *buf, uint64_t len) {
     } else {
         sys_puts("[net6test] usbnet value line not found\n");
     }
+
+    if (usbnet_hdr) {
+        const char *p = usbnet_hdr;
+        while (*p && *p != '\n') p++;
+        (void)sys_write(1, usbnet_hdr, (uint64_t)(p - usbnet_hdr));
+        sys_puts("\n");
+    }
+
+    if (ipv6dbg_hdr) {
+        const char *p = ipv6dbg_hdr;
+        while (*p && *p != '\n') p++;
+        (void)sys_write(1, ipv6dbg_hdr, (uint64_t)(p - ipv6dbg_hdr));
+        sys_puts("\n");
+    }
+
     if (ipv6dbg) {
         const char *p = ipv6dbg;
         while (*p && *p != '\n') p++;
@@ -284,6 +301,11 @@ int main(int argc, char **argv, char **envp) {
         }
 
         puts_ln("[net6test] PASS");
+
+        /* Keep the guest alive briefly so host-side tests (ping6 host->guest)
+         * can run while QEMU is still up.
+         */
+        sleep_ms(2000);
     }
 
     (void)sys_reboot(0, 0, 0x4321fedcull, 0);

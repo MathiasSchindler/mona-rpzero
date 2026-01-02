@@ -25,6 +25,14 @@ typedef struct {
      * Returns 0 on success, negative on error.
      */
     int (*tx_frame)(netif_t *nif, const uint8_t *frame, size_t len);
+
+    /* Optional: program an L2 multicast receive filter.
+     * Drivers that don't need this (or can't implement it) can leave it NULL.
+     *
+     * macs points to mac_count consecutive 6-byte MAC addresses.
+     * Returns 0 on success, negative on error.
+     */
+    int (*set_multicast_list)(netif_t *nif, const uint8_t *macs, size_t mac_count);
 } netif_ops_t;
 
 struct netif {

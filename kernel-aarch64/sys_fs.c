@@ -1030,8 +1030,14 @@ retry_first_byte:
         usb_net_debug_t udbg;
         if (usb_net_get_debug(&udbg) == 0) {
             buf_puts(out, sizeof(out), &pos,
-                     "usbnet\trx_xfers\trx_bytes\trndis_ok\trndis_drop_small\trndis_drop_type\trndis_drop_bounds\tlast_got\tlast_msg_type\tlast_data_off\tlast_data_len\tlast_ethertype\n");
+                     "usbnet\trx_poll\trx_nak\trx_err\trx_xfers\trx_bytes\trndis_ok\trndis_drop_small\trndis_drop_type\trndis_drop_bounds\tlast_got\tlast_msg_type\tlast_data_off\tlast_data_len\tlast_ethertype\n");
             buf_puts(out, sizeof(out), &pos, "usbnet\t");
+            buf_put_u64(out, sizeof(out), &pos, udbg.rx_poll_calls);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_u64(out, sizeof(out), &pos, udbg.rx_naks);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_u64(out, sizeof(out), &pos, udbg.rx_errors);
+            buf_putc(out, sizeof(out), &pos, '\t');
             buf_put_u64(out, sizeof(out), &pos, udbg.rx_usb_xfers);
             buf_putc(out, sizeof(out), &pos, '\t');
             buf_put_u64(out, sizeof(out), &pos, udbg.rx_usb_bytes);
@@ -1059,7 +1065,7 @@ retry_first_byte:
         net_ipv6_debug_t vdbg;
         if (net_ipv6_get_debug(&vdbg) == 0) {
             buf_puts(out, sizeof(out), &pos,
-                     "ipv6dbg\trx_ipv6\trx_drop_short\trx_drop_len\trx_drop_csum\trx_udp\trx_udp_delivered\trx_icmpv6\trx_ra\tra_drop_hlim\tra_drop_src\tra_drop_short\trx_ns\trx_na\trx_echo_req\trx_echo_reply\tlast_icmp_type\tlast_hlim\n");
+                     "ipv6dbg\trx_ipv6\trx_drop_short\trx_drop_len\trx_drop_csum\trx_udp\trx_udp_delivered\trx_icmpv6\trx_ra\tra_drop_hlim\tra_drop_src\tra_drop_short\trx_ns\trx_na\trx_echo_req\trx_echo_reply\ttx_rs\ttx_ns\ttx_echo_req\tping6_calls\tping6_eagain\tping6_ebusy\tping6_sent_echo\tping6_sent_ns\tlast_icmp_type\tlast_hlim\n");
             buf_puts(out, sizeof(out), &pos, "ipv6dbg\t");
             buf_put_u64(out, sizeof(out), &pos, vdbg.rx_ipv6_packets);
             buf_putc(out, sizeof(out), &pos, '\t');
@@ -1091,6 +1097,25 @@ retry_first_byte:
             buf_putc(out, sizeof(out), &pos, '\t');
             buf_put_u64(out, sizeof(out), &pos, vdbg.rx_icmpv6_echo_reply);
             buf_putc(out, sizeof(out), &pos, '\t');
+
+            buf_put_u64(out, sizeof(out), &pos, vdbg.tx_icmpv6_rs);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_u64(out, sizeof(out), &pos, vdbg.tx_icmpv6_ns);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_u64(out, sizeof(out), &pos, vdbg.tx_icmpv6_echo_req);
+            buf_putc(out, sizeof(out), &pos, '\t');
+
+            buf_put_u64(out, sizeof(out), &pos, vdbg.ping6_start_calls);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_u64(out, sizeof(out), &pos, vdbg.ping6_start_eagain);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_u64(out, sizeof(out), &pos, vdbg.ping6_start_ebusy);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_u64(out, sizeof(out), &pos, vdbg.ping6_start_sent_echo);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_u64(out, sizeof(out), &pos, vdbg.ping6_start_sent_ns);
+            buf_putc(out, sizeof(out), &pos, '\t');
+
             buf_put_u64(out, sizeof(out), &pos, (uint64_t)vdbg.last_icmp_type);
             buf_putc(out, sizeof(out), &pos, '\t');
             buf_put_u64(out, sizeof(out), &pos, (uint64_t)vdbg.last_hop_limit);
