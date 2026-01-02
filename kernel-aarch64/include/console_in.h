@@ -36,3 +36,8 @@ char console_in_getc_blocking(void);
 
 /* Returns 1 if any configured input backend requires polling (e.g. USB kbd). */
 int console_in_needs_polling(void);
+
+/* If polling is needed, return the next time (ns, monotonic) that polling should
+ * run. Returns 0 if no polling is needed or time is unavailable.
+ */
+uint64_t console_in_next_poll_deadline_ns(void);

@@ -144,10 +144,23 @@ int sched_pick_next_runnable(void) {
                 time_tick_schedule_oneshot_ns(1);
             }
         } else if (has_blocked_io) {
-            if (console_in_needs_polling()) {
-                time_tick_enable_periodic();
-            } else {
+            if (!console_in_needs_polling()) {
+                /* IRQ-driven input (e.g. UART RX) will wake us without a tick. */
                 time_tick_disable();
+            } else {
+                /* Polling backends (USB kbd): wake up only when polling is due. */
+                uint64_t now = time_now_ns();
+                uint64_t next = console_in_next_poll_deadline_ns();
+                if (now != 0 && next != 0) {
+                    if (next > now) {
+                        time_tick_schedule_oneshot_ns(next - now);
+                    } else {
+                        time_tick_schedule_oneshot_ns(1);
+                    }
+                } else {
+                    /* Fallback: if we can't compute deadlines, keep a periodic tick. */
+                    time_tick_enable_periodic();
+                }
             }
         }
 

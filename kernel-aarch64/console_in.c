@@ -3,6 +3,7 @@
 #include "uart_pl011.h"
 
 #ifdef ENABLE_USB_KBD
+#include "time.h"
 #include "usb_kbd.h"
 #endif
 
@@ -12,6 +13,16 @@
 static char g_ring[CONSOLE_IN_RING_SIZE];
 static uint32_t g_r; /* read index */
 static uint32_t g_w; /* write index */
+
+/* For polling-only input backends (currently: USB keyboard), avoid polling on
+ * every scheduler iteration. Instead poll on a fixed cadence.
+ */
+static uint64_t g_next_poll_ns;
+
+/* Conservative default cadence. HID interrupt endpoints are commonly 10ms.
+ * This is a tradeoff: lower values reduce latency but cost CPU.
+ */
+#define CONSOLE_IN_POLL_INTERVAL_NS (10000000ull)
 
 static inline uint32_t ring_next(uint32_t idx) {
     idx++;
@@ -44,6 +55,7 @@ static int ring_pop(char *out) {
 void console_in_init(void) {
     g_r = 0;
     g_w = 0;
+    g_next_poll_ns = 0;
 }
 
 void console_in_poll(void) {
@@ -56,7 +68,17 @@ void console_in_poll(void) {
     }
 
 #ifdef ENABLE_USB_KBD
-    usb_kbd_poll();
+    uint64_t now = time_now_ns();
+    if (now != 0) {
+        if (g_next_poll_ns == 0 || now >= g_next_poll_ns) {
+            usb_kbd_poll();
+            /* Schedule the next poll. */
+            g_next_poll_ns = now + CONSOLE_IN_POLL_INTERVAL_NS;
+        }
+    } else {
+        /* If time isn't available, fall back to the original behavior. */
+        usb_kbd_poll();
+    }
 #endif
 
     /* Future: additional input backends enqueue into the same ring. */
@@ -86,6 +108,14 @@ char console_in_getc_blocking(void) {
 int console_in_needs_polling(void) {
 #ifdef ENABLE_USB_KBD
     return 1;
+#else
+    return 0;
+#endif
+}
+
+uint64_t console_in_next_poll_deadline_ns(void) {
+#ifdef ENABLE_USB_KBD
+    return g_next_poll_ns;
 #else
     return 0;
 #endif

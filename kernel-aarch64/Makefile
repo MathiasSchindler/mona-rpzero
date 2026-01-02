@@ -101,7 +101,7 @@ $(BUILD)/arch/irq_regtest.o: arch/irq_regtest.S $(CONFIG_STAMP) | $(BUILD)
 $(BUILD)/main.o: main.c include/uart_pl011.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/console_in.o: console_in.c include/console_in.h include/uart_pl011.h $(CONFIG_STAMP) | $(BUILD)
+$(BUILD)/console_in.o: console_in.c include/console_in.h include/time.h include/uart_pl011.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/klog.o: klog.c include/klog.h include/stdint.h $(CONFIG_STAMP) | $(BUILD)
