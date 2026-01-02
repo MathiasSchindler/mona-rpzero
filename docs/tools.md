@@ -137,3 +137,57 @@ Time notes:
 | cwd | Done | 3 |
 | tty | Done | 2 |
 | compat | Done | 5 |
+
+## Networking playground tools (proposed)
+
+These are **ranked** by “how soon they become fun/useful” given the current state:
+
+1. **ifconfig/ip6 (very small)** — show link + counters, optionally configure a local IPv6 address
+	 - Useful when you have:
+		 - A working `netif` driver path (Phase 2 L2 RX/TX)
+		 - Some way to read interface state from userspace (done: `/proc/net`)
+	 - Becomes *configurable* when you add:
+		 - A userspace→kernel control API to set per-interface IPv6 address / bring link up (could be a tiny `ioctl`-style syscall or a minimal `socket` API)
+		 - Optional: a place to persist/show config (e.g. `/proc/net/ifaces`, `/proc/net/ipv6_addr`)
+
+2. **ping6 (ICMPv6 echo)** — the canonical “is the network alive?” tool
+	 - Useful when you have:
+		 - IPv6 packet build/parse + checksum
+		 - ICMPv6 Echo Request/Reply
+		 - Neighbor Discovery (NDP): at least NS/NA to resolve next-hop MAC (or a hardcoded neighbor entry as a temporary hack)
+		 - A userspace API to send/receive ICMPv6 (raw IPv6/ICMP socket, or a dedicated `sys_ping6`/`sys_net_raw` interface)
+	 - Extra polish:
+		 - RTT timing (clock is already there), sequence numbers, `-c`, `-i`, `-W`
+
+3. **udp6cat (netcat for UDP over IPv6)** — simplest “real payload” tool
+	 - Useful when you have:
+		 - IPv6 + UDP + checksum
+		 - Basic port demux in-kernel
+		 - A userspace API for datagrams (`socket(AF_INET6, SOCK_DGRAM)` + `sendto/recvfrom`, or a tiny custom UDP syscall pair)
+	 - Nice-to-have:
+		 - `-l` listen mode, `-p` local port, `-w` timeout
+
+4. **netcat6 (TCP over IPv6)** — interactive testing, shells, file copy
+	 - Useful when you have:
+		 - TCP (3-way handshake, retransmit timers, basic congestion control can be minimal at first)
+		 - Blocking reads/writes + wakeups (already have blocked IO patterns for UART/pipe)
+		 - A userspace socket API (`socket/connect/listen/accept/read/write/close`)
+	 - Note:
+		 - This is the biggest jump in complexity; UDP tools give you most early value.
+
+5. **dns6 (tiny resolver)** — makes higher-level tools possible
+	 - Useful when you have:
+		 - UDP working (DNS is usually UDP first)
+		 - A way to configure DNS server IPv6 (hardcode, `/etc/resolv.conf`, or `/proc/net/dns`)
+
+6. **wget6 (already listed as Planned)** — end-to-end proof
+	 - Useful when you have:
+		 - DNS + TCP + a minimal HTTP client
+		 - A userspace socket API
+
+7. **tcpdump/pcap-lite** — debugging superpower
+	 - Useful when you have:
+		 - A capture API (raw frame tap from `netif_rx_frame()`), plus a way to stream it to userspace
+		 - Optional: simple capture filters (even “ethertype ipv6” is a big help)
+
+If you want the most “elementary” possible tool that still exercises the driver path before IPv6 exists, a tiny `ethsend`/`ethrecv` (raw Ethernet frames) can work — but it really wants a raw-packet userspace API, and most external hosts won’t respond to arbitrary frames unless you implement at least NDP/IPv6.

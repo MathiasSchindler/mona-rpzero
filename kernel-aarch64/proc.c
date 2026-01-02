@@ -57,6 +57,16 @@ void proc_clear(proc_t *p) {
     p->pending_read_buf_user = 0;
     p->pending_read_len = 0;
     p->pending_read_fd = 0;
+
+    p->pending_ping6 = 0;
+    p->ping6_done = 0;
+    p->ping6_ident = 0;
+    p->ping6_seq = 0;
+    for (uint64_t i = 0; i < 16; i++) p->ping6_dst_ip[i] = 0;
+    p->ping6_start_ns = 0;
+    p->ping6_rtt_ns = 0;
+    p->ping6_rtt_user = 0;
+    p->ping6_ret = 0;
     for (uint64_t i = 0; i < MAX_FDS; i++) {
         p->fdt.fd_to_desc[i] = -1;
     }

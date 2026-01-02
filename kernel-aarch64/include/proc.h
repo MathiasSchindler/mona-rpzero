@@ -51,6 +51,17 @@ typedef struct {
     uint64_t pending_read_buf_user;
     uint64_t pending_read_len;
     uint64_t pending_read_fd;
+
+    /* Pending mona-specific ping6 syscall. */
+    uint8_t pending_ping6;
+    uint8_t ping6_done;
+    uint16_t ping6_ident;
+    uint16_t ping6_seq;
+    uint8_t ping6_dst_ip[16];
+    uint64_t ping6_start_ns;
+    uint64_t ping6_rtt_ns;
+    uint64_t ping6_rtt_user;
+    uint64_t ping6_ret;
     fd_table_t fdt;
 } proc_t;
 

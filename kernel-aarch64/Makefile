@@ -38,6 +38,7 @@ OBJS := \
 	$(BUILD)/exceptions.o \
 	$(BUILD)/irq.o \
 	$(BUILD)/net.o \
+	$(BUILD)/net_ipv6.o \
 	$(BUILD)/klog.o \
 	$(BUILD)/console_in.o \
 	$(BUILD)/usb.o \
@@ -52,6 +53,7 @@ OBJS := \
 	$(BUILD)/sys_util.o \
 	$(BUILD)/sys_misc.o \
 	$(BUILD)/sys_dmesg.o \
+	$(BUILD)/sys_net.o \
 	$(BUILD)/sys_fs.o \
 	$(BUILD)/sys_proc.o \
 	$(BUILD)/proc.o \
@@ -153,7 +155,10 @@ $(BUILD)/exceptions.o: exceptions.c include/exceptions.h include/errno.h include
 $(BUILD)/irq.o: irq.c include/irq.h include/time.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/net.o: net.c include/net.h include/stddef.h include/stdint.h include/uart_pl011.h $(CONFIG_STAMP) | $(BUILD)
+$(BUILD)/net.o: net.c include/net.h include/net_ipv6.h include/stddef.h include/stdint.h include/uart_pl011.h $(CONFIG_STAMP) | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/net_ipv6.o: net_ipv6.c include/net_ipv6.h include/net.h include/proc.h include/time.h include/errno.h include/uart_pl011.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/time.o: time.c include/time.h $(CONFIG_STAMP) | $(BUILD)
@@ -180,6 +185,9 @@ $(BUILD)/sys_misc.o: sys_misc.c include/syscalls.h include/sys_util.h include/er
 $(BUILD)/sys_dmesg.o: sys_dmesg.c include/syscalls.h include/sys_util.h include/errno.h include/klog.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(BUILD)/sys_net.o: sys_net.c include/syscalls.h include/sys_util.h include/errno.h include/net.h include/net_ipv6.h include/proc.h include/sched.h include/time.h $(CONFIG_STAMP) | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
 $(BUILD)/sys_fs.o: sys_fs.c include/syscalls.h include/sys_util.h include/errno.h include/linux_abi.h include/fd.h include/pipe.h include/vfs.h include/initramfs.h include/proc.h include/uart_pl011.h include/console_in.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -189,7 +197,7 @@ $(BUILD)/sys_proc.o: sys_proc.c include/syscalls.h include/sys_util.h include/er
 $(BUILD)/proc.o: proc.c include/proc.h include/fd.h include/pipe.h include/vfs.h include/mmu.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/sched.o: sched.c include/sched.h include/proc.h include/regs.h include/mmu.h include/console_in.h include/irq.h $(CONFIG_STAMP) | $(BUILD)
+$(BUILD)/sched.o: sched.c include/sched.h include/proc.h include/regs.h include/mmu.h include/sys_util.h include/console_in.h include/irq.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/vfs.o: vfs.c include/vfs.h include/initramfs.h $(CONFIG_STAMP) | $(BUILD)

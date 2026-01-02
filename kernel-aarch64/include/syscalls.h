@@ -53,3 +53,12 @@ int handle_exit_and_maybe_switch(trap_frame_t *tf, uint64_t code);
 
 /* mona-specific: read kernel log ring buffer (dmesg). */
 uint64_t sys_mona_dmesg(uint64_t buf_user, uint64_t len, uint64_t flags);
+
+/* mona-specific: ICMPv6 echo (ping6). */
+uint64_t sys_mona_ping6(trap_frame_t *tf,
+						uint64_t dst_ip_user,
+						uint64_t ident,
+						uint64_t seq,
+						uint64_t timeout_ms,
+						uint64_t rtt_ns_user,
+						uint64_t elr);

@@ -2,10 +2,12 @@
 
 #include "cache.h"
 #include "console_in.h"
+#include "errno.h"
 #include "irq.h"
 #include "mmu.h"
 #include "proc.h"
 #include "regs.h"
+#include "sys_util.h"
 #include "time.h"
 
 static void sched_wake_sleepers(void) {
@@ -70,6 +72,42 @@ static void sched_complete_console_read_if_needed(proc_t *p) {
     p->pending_read_fd = 0;
     p->pending_read_buf_user = 0;
     p->pending_read_len = 0;
+}
+
+static void sched_complete_ping6_if_needed(proc_t *p) {
+    if (!p) return;
+    if (!p->pending_ping6) return;
+
+    if (!p->ping6_done) {
+        /* If we're runnable but still marked pending, the sleep deadline fired. */
+        uint64_t now = time_now_ns();
+        if (p->sleep_deadline_ns != 0 && now >= p->sleep_deadline_ns) {
+            p->ping6_done = 1;
+            p->ping6_ret = (uint64_t)(-(int64_t)ETIMEDOUT);
+            p->ping6_rtt_ns = 0;
+            p->sleep_deadline_ns = 0;
+        } else {
+            /* Still waiting; keep it pending. */
+            return;
+        }
+    }
+
+    /* Complete the syscall return value and optional RTT writeback. */
+    if (p->ping6_ret == 0 && p->ping6_rtt_user != 0) {
+        (void)write_u64_to_user(p->ping6_rtt_user, p->ping6_rtt_ns);
+    }
+
+    p->tf.x[0] = p->ping6_ret;
+
+    p->pending_ping6 = 0;
+    p->ping6_done = 0;
+    p->ping6_ident = 0;
+    p->ping6_seq = 0;
+    for (uint64_t i = 0; i < 16; i++) p->ping6_dst_ip[i] = 0;
+    p->ping6_start_ns = 0;
+    p->ping6_rtt_ns = 0;
+    p->ping6_rtt_user = 0;
+    p->ping6_ret = 0;
 }
 
 static int sched_any_sleepers(uint64_t *out_earliest_deadline_ns) {
@@ -192,6 +230,9 @@ void proc_switch_to(int idx, trap_frame_t *tf) {
 
     /* Complete any pending console read now that this process address space is active. */
     sched_complete_console_read_if_needed(&g_procs[idx]);
+
+    /* Complete any pending ping6 syscall now that this process address space is active. */
+    sched_complete_ping6_if_needed(&g_procs[idx]);
 
     write_elr_el1(g_procs[idx].elr);
     tf_copy(tf, &g_procs[idx].tf);

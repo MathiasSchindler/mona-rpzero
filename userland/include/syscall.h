@@ -264,6 +264,27 @@ static inline uint64_t sys_mona_dmesg(void *buf, uint64_t len, uint64_t flags) {
     return __syscall3(__NR_mona_dmesg, (uint64_t)(uintptr_t)buf, len, flags);
 }
 
+/* mona-specific: synchronous ICMPv6 echo (ping6).
+ *
+ * Args:
+ * - dst_ip: pointer to 16-byte IPv6 address
+ * - ident/seq: echoed back in reply
+ * - timeout_ms: overall timeout for NDP + echo
+ * - rtt_ns_out: optional pointer to u64
+ */
+static inline uint64_t sys_mona_ping6(const uint8_t dst_ip[16],
+                                     uint64_t ident,
+                                     uint64_t seq,
+                                     uint64_t timeout_ms,
+                                     uint64_t *rtt_ns_out) {
+    return __syscall5(__NR_mona_ping6,
+                      (uint64_t)(uintptr_t)dst_ip,
+                      ident,
+                      seq,
+                      timeout_ms,
+                      (uint64_t)(uintptr_t)rtt_ns_out);
+}
+
 __attribute__((noreturn)) static inline void sys_exit_group(uint64_t status) {
     (void)__syscall1(__NR_exit_group, status);
     for (;;) { }

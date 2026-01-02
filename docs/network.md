@@ -19,6 +19,55 @@ If you want a different definition of “full” (e.g., mandatory DHCPv6, MLDv2,
 
 ---
 
+## Current status (what’s implemented now)
+
+Kernel:
+- USB Ethernet in QEMU works and feeds an Ethernet `netif`.
+- Minimal IPv6 link-local support (address derived from MAC via EUI-64).
+- Minimal ICMPv6 echo request/reply.
+- Minimal Neighbor Discovery (NS/NA) + tiny neighbor cache (enough to resolve a peer on-link).
+
+Userland:
+- A syscall-only `ping6` tool is available at `/bin/ping6`.
+- `ping6` uses a mona-specific syscall (`mona_ping6`) rather than sockets (temporary milestone to keep scope small).
+
+Not implemented yet:
+- Router Advertisements / SLAAC / default route.
+- DAD.
+- IPv6 extension headers and fragmentation.
+- UDP/TCP sockets.
+
+---
+
+## How to test `ping6` in QEMU (Linux, TAP backend)
+
+`-netdev user` is convenient but not a realistic L2; Neighbor Discovery is easiest to validate with TAP.
+
+1) Create and bring up a TAP interface on the host:
+
+- `sudo ip tuntap add dev mona0 mode tap user "$USER"`
+- `sudo ip link set mona0 up`
+
+2) Find the host’s link-local IPv6 on that TAP:
+
+- `ip -6 addr show dev mona0 scope link`
+
+Copy the `fe80::...` address (drop any `%mona0` zone suffix when you type it into mona).
+
+3) Boot mona with USB net attached to the TAP:
+
+- `make run USB_NET=1 USB_NET_BACKEND=tap TAP_IF=mona0`
+
+4) In mona, ping the host link-local:
+
+- `/bin/ping6 <host-fe80-addr> 4 1000`
+
+Notes:
+- This is link-local only right now, so the peer must be on the same L2 segment.
+- If you want deterministic host link-local addresses, you can configure Linux addr-gen mode, but it’s not required: just query the actual `fe80::...` with `ip -6 addr`.
+
+---
+
 ## Phase 0 — Preflight: decide the external interface path
 
 1) **Confirm QEMU NIC strategy**
@@ -254,9 +303,9 @@ Deliverable for Phase 7:
 
 ## Suggested milestone checklist
 
-- M1: QEMU enumerates USB net device; raw Ethernet rx/tx works.
-- M2: IPv6 link-local + ICMPv6 echo works.
-- M3: NDP + SLAAC via RA works (prefer TAP).
+- M1: QEMU enumerates USB net device; raw Ethernet rx/tx works. (done)
+- M2: IPv6 link-local + ICMPv6 echo works. (done; use TAP to validate end-to-end)
+- M3: NDP + SLAAC via RA works (prefer TAP). (NDP done; RA/SLAAC pending)
 - M4: UDP sockets + udp-echo works.
 - M5: TCP sockets + basic client works.
 - M6: Same stack works on real Pi Zero 2 W using a USB Ethernet dongle.

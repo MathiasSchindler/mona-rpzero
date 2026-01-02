@@ -21,5 +21,13 @@
 #define ENAMETOOLONG 36ull
 #define ENOENT 2ull
 #define ESRCH 3ull
+#define EIO 5ull
 #define ENOSYS 38ull
 #define ENOTEMPTY 39ull
+
+/* Additional errno values used by networking bring-up. */
+#define ENODEV 19ull
+#define EBUSY 16ull
+#define EMSGSIZE 90ull
+#define EAFNOSUPPORT 97ull
+#define ETIMEDOUT 110ull

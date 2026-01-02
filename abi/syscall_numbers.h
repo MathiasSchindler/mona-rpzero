@@ -56,3 +56,4 @@
  * Keep these well above the Linux AArch64 range we currently use.
  */
 #define __NR_mona_dmesg    4096ull
+#define __NR_mona_ping6    4097ull

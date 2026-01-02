@@ -1,5 +1,7 @@
 #include "net.h"
 
+#include "net_ipv6.h"
+
 #include "uart_pl011.h"
 
 /*
@@ -32,13 +34,6 @@ typedef struct __attribute__((packed)) {
 
 #define ETH_TYPE_IPV6 0x86DDu
 
-static void ipv6_input(netif_t *nif, const uint8_t *pkt, size_t len) {
-    (void)pkt;
-    (void)len;
-    /* Stub for Phase 1: just prove the demux plumbing exists. */
-    (void)nif;
-}
-
 static void ether_input(netif_t *nif, const uint8_t *frame, size_t len) {
     if (!nif || !frame) return;
     if (len < sizeof(eth_hdr_t)) {
@@ -54,7 +49,7 @@ static void ether_input(netif_t *nif, const uint8_t *frame, size_t len) {
 
     switch (ethertype) {
         case ETH_TYPE_IPV6:
-            ipv6_input(nif, payload, payload_len);
+            net_ipv6_input(nif, h->src, payload, payload_len);
             break;
         default:
             /* Unknown EtherType: ignore for now. */
@@ -65,6 +60,8 @@ static void ether_input(netif_t *nif, const uint8_t *frame, size_t len) {
 void net_init(void) {
     for (uint32_t i = 0; i < NET_MAX_IFACES; i++) g_net.ifaces[i] = 0;
     g_net.iface_count = 0;
+
+    net_ipv6_init();
 }
 
 int netif_register(netif_t *nif) {
@@ -73,6 +70,9 @@ int netif_register(netif_t *nif) {
 
     /* Ensure name is NUL-terminated. */
     nif->name[NETIF_NAME_MAX - 1] = '\0';
+
+    /* Ensure IPv6 link-local is initialized if the stack is used. */
+    net_ipv6_configure_netif(nif);
 
     g_net.ifaces[g_net.iface_count++] = nif;
     return 0;

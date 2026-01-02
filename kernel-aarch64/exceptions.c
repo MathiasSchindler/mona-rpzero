@@ -368,6 +368,15 @@ uint64_t exception_handle(trap_frame_t *tf,
             ret = sys_mona_dmesg(a0, a1, a2);
             break;
 
+        case __NR_mona_ping6:
+            ret = sys_mona_ping6(tf, a0, a1, a2, a3, a4, elr);
+            if (ret == SYSCALL_SWITCHED) {
+                /* sys_mona_ping6 already switched contexts. */
+                tf_copy(&g_procs[g_cur_proc].tf, tf);
+                return 1;
+            }
+            break;
+
         case __NR_exit:
         case __NR_exit_group:
             proc_trace("exit", g_procs[g_cur_proc].pid, a0);

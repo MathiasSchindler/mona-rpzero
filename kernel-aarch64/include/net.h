@@ -32,6 +32,10 @@ struct netif {
     uint8_t mac[6];
     uint16_t mtu; /* payload MTU (not including Ethernet header) */
 
+    /* Phase 3: minimal IPv6 state (link-local only for now). */
+    uint8_t ipv6_ll[16];
+    uint8_t ipv6_ll_valid;
+
     const netif_ops_t *ops;
     void *driver_ctx;
 
