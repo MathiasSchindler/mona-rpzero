@@ -18,6 +18,35 @@ extern "C" {
 
 void net_ipv6_init(void);
 
+typedef struct {
+	uint64_t rx_ipv6_packets;
+	uint64_t rx_drop_short;
+	uint64_t rx_drop_len;
+	uint64_t rx_drop_csum;
+
+	uint64_t rx_udp;
+	uint64_t rx_udp_delivered;
+
+	uint64_t rx_icmpv6;
+	uint64_t rx_icmpv6_ra;
+	uint64_t rx_icmpv6_ra_drop_hlim;
+	uint64_t rx_icmpv6_ra_drop_src;
+	uint64_t rx_icmpv6_ra_drop_short;
+
+	uint64_t rx_icmpv6_ns;
+	uint64_t rx_icmpv6_na;
+	uint64_t rx_icmpv6_echo_req;
+	uint64_t rx_icmpv6_echo_reply;
+
+	uint8_t last_icmp_type;
+	uint8_t last_hop_limit;
+} net_ipv6_debug_t;
+
+/* Best-effort debug snapshot.
+ * Returns 0 on success.
+ */
+int net_ipv6_get_debug(net_ipv6_debug_t *out);
+
 /* Called by net core when a netif is registered.
  * Computes and stores the link-local address.
  */

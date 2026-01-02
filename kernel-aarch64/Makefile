@@ -188,7 +188,7 @@ $(BUILD)/sys_dmesg.o: sys_dmesg.c include/syscalls.h include/sys_util.h include/
 $(BUILD)/sys_net.o: sys_net.c include/syscalls.h include/sys_util.h include/errno.h include/net.h include/net_ipv6.h include/proc.h include/sched.h include/time.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/sys_fs.o: sys_fs.c include/syscalls.h include/sys_util.h include/errno.h include/linux_abi.h include/fd.h include/pipe.h include/vfs.h include/initramfs.h include/proc.h include/uart_pl011.h include/console_in.h $(CONFIG_STAMP) | $(BUILD)
+$(BUILD)/sys_fs.o: sys_fs.c include/syscalls.h include/sys_util.h include/errno.h include/linux_abi.h include/fd.h include/pipe.h include/vfs.h include/initramfs.h include/proc.h include/net.h include/uart_pl011.h include/console_in.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/sys_proc.o: sys_proc.c include/syscalls.h include/sys_util.h include/errno.h include/linux_abi.h include/proc.h include/regs.h include/sched.h include/mmu.h include/pmm.h include/elf64.h include/cache.h include/initramfs.h include/power.h include/uart_pl011.h $(CONFIG_STAMP) | $(BUILD)

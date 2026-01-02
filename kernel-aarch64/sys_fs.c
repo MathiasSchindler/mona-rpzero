@@ -12,6 +12,8 @@
 #include "uart_pl011.h"
 #include "console_in.h"
 #include "net.h"
+#include "net_ipv6.h"
+#include "usb_net.h"
 #include "vfs.h"
 
 #define AT_FDCWD ((int64_t)-100)
@@ -141,6 +143,25 @@ static void buf_put_hex_u8(char *buf, uint64_t cap, uint64_t *pos, uint8_t v) {
     static const char *hex = "0123456789abcdef";
     buf_putc(buf, cap, pos, hex[(v >> 4) & 0xFu]);
     buf_putc(buf, cap, pos, hex[v & 0xFu]);
+}
+
+static void buf_put_hex_u16(char *buf, uint64_t cap, uint64_t *pos, uint16_t v) {
+    buf_puts(buf, cap, pos, "0x");
+    buf_put_hex_u8(buf, cap, pos, (uint8_t)((v >> 8) & 0xFFu));
+    buf_put_hex_u8(buf, cap, pos, (uint8_t)(v & 0xFFu));
+}
+
+static void buf_put_ipv6_hex(char *buf, uint64_t cap, uint64_t *pos, const uint8_t ip[16]) {
+    if (!ip) {
+        buf_puts(buf, cap, pos, "::");
+        return;
+    }
+
+    for (int i = 0; i < 16; i += 2) {
+        if (i) buf_putc(buf, cap, pos, ':');
+        buf_put_hex_u8(buf, cap, pos, ip[i]);
+        buf_put_hex_u8(buf, cap, pos, ip[i + 1]);
+    }
 }
 
 static void buf_put_mac(char *buf, uint64_t cap, uint64_t *pos, const uint8_t mac[6]) {
@@ -950,10 +971,11 @@ retry_first_byte:
 
     if (d->kind == FDESC_PROC && d->u.proc.node == 4u) {
         /* /proc/net: simple interface/stats snapshot. */
-        char out[1024];
+        char out[2048];
         uint64_t pos = 0;
 
-        buf_puts(out, sizeof(out), &pos, "iface\tmtu\tmac\trx_frames\trx_drops\ttx_frames\ttx_drops\n");
+        buf_puts(out, sizeof(out), &pos,
+                 "iface\tmtu\tmac\trx_frames\trx_drops\ttx_frames\ttx_drops\tipv6_ll\tipv6_global\tipv6_router_ll\tipv6_dns\n");
 
         uint32_t nifs = netif_count();
         for (uint32_t i = 0; i < nifs; i++) {
@@ -973,6 +995,105 @@ retry_first_byte:
             buf_put_u64(out, sizeof(out), &pos, nif->tx_frames);
             buf_putc(out, sizeof(out), &pos, '\t');
             buf_put_u64(out, sizeof(out), &pos, nif->tx_drops);
+
+            buf_putc(out, sizeof(out), &pos, '\t');
+            if (nif->ipv6_ll_valid) {
+                buf_put_ipv6_hex(out, sizeof(out), &pos, nif->ipv6_ll);
+            } else {
+                buf_putc(out, sizeof(out), &pos, '-');
+            }
+
+            buf_putc(out, sizeof(out), &pos, '\t');
+            if (nif->ipv6_global_valid) {
+                buf_put_ipv6_hex(out, sizeof(out), &pos, nif->ipv6_global);
+            } else {
+                buf_putc(out, sizeof(out), &pos, '-');
+            }
+
+            buf_putc(out, sizeof(out), &pos, '\t');
+            if (nif->ipv6_router_valid) {
+                buf_put_ipv6_hex(out, sizeof(out), &pos, nif->ipv6_router_ll);
+            } else {
+                buf_putc(out, sizeof(out), &pos, '-');
+            }
+
+            buf_putc(out, sizeof(out), &pos, '\t');
+            if (nif->ipv6_dns_valid) {
+                buf_put_ipv6_hex(out, sizeof(out), &pos, nif->ipv6_dns);
+            } else {
+                buf_putc(out, sizeof(out), &pos, '-');
+            }
+
+            buf_putc(out, sizeof(out), &pos, '\n');
+        }
+
+        usb_net_debug_t udbg;
+        if (usb_net_get_debug(&udbg) == 0) {
+            buf_puts(out, sizeof(out), &pos,
+                     "usbnet\trx_xfers\trx_bytes\trndis_ok\trndis_drop_small\trndis_drop_type\trndis_drop_bounds\tlast_got\tlast_msg_type\tlast_data_off\tlast_data_len\tlast_ethertype\n");
+            buf_puts(out, sizeof(out), &pos, "usbnet\t");
+            buf_put_u64(out, sizeof(out), &pos, udbg.rx_usb_xfers);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_u64(out, sizeof(out), &pos, udbg.rx_usb_bytes);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_u64(out, sizeof(out), &pos, udbg.rx_rndis_ok);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_u64(out, sizeof(out), &pos, udbg.rx_rndis_drop_small);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_u64(out, sizeof(out), &pos, udbg.rx_rndis_drop_type);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_u64(out, sizeof(out), &pos, udbg.rx_rndis_drop_bounds);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_u64(out, sizeof(out), &pos, (uint64_t)udbg.last_got);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_u64(out, sizeof(out), &pos, (uint64_t)udbg.last_msg_type);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_u64(out, sizeof(out), &pos, (uint64_t)udbg.last_data_off);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_u64(out, sizeof(out), &pos, (uint64_t)udbg.last_data_len);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_hex_u16(out, sizeof(out), &pos, udbg.last_ethertype);
+            buf_putc(out, sizeof(out), &pos, '\n');
+        }
+
+        net_ipv6_debug_t vdbg;
+        if (net_ipv6_get_debug(&vdbg) == 0) {
+            buf_puts(out, sizeof(out), &pos,
+                     "ipv6dbg\trx_ipv6\trx_drop_short\trx_drop_len\trx_drop_csum\trx_udp\trx_udp_delivered\trx_icmpv6\trx_ra\tra_drop_hlim\tra_drop_src\tra_drop_short\trx_ns\trx_na\trx_echo_req\trx_echo_reply\tlast_icmp_type\tlast_hlim\n");
+            buf_puts(out, sizeof(out), &pos, "ipv6dbg\t");
+            buf_put_u64(out, sizeof(out), &pos, vdbg.rx_ipv6_packets);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_u64(out, sizeof(out), &pos, vdbg.rx_drop_short);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_u64(out, sizeof(out), &pos, vdbg.rx_drop_len);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_u64(out, sizeof(out), &pos, vdbg.rx_drop_csum);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_u64(out, sizeof(out), &pos, vdbg.rx_udp);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_u64(out, sizeof(out), &pos, vdbg.rx_udp_delivered);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_u64(out, sizeof(out), &pos, vdbg.rx_icmpv6);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_u64(out, sizeof(out), &pos, vdbg.rx_icmpv6_ra);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_u64(out, sizeof(out), &pos, vdbg.rx_icmpv6_ra_drop_hlim);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_u64(out, sizeof(out), &pos, vdbg.rx_icmpv6_ra_drop_src);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_u64(out, sizeof(out), &pos, vdbg.rx_icmpv6_ra_drop_short);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_u64(out, sizeof(out), &pos, vdbg.rx_icmpv6_ns);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_u64(out, sizeof(out), &pos, vdbg.rx_icmpv6_na);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_u64(out, sizeof(out), &pos, vdbg.rx_icmpv6_echo_req);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_u64(out, sizeof(out), &pos, vdbg.rx_icmpv6_echo_reply);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_u64(out, sizeof(out), &pos, (uint64_t)vdbg.last_icmp_type);
+            buf_putc(out, sizeof(out), &pos, '\t');
+            buf_put_u64(out, sizeof(out), &pos, (uint64_t)vdbg.last_hop_limit);
             buf_putc(out, sizeof(out), &pos, '\n');
         }
 

@@ -258,6 +258,15 @@ typedef struct __attribute__((packed)) {
 #define ICMPV6_NEIGHBOR_SOLICIT 135u
 #define ICMPV6_NEIGHBOR_ADVERT 136u
 
+/* Debug counters for diagnosing RA/SLAAC and RX drops. */
+static net_ipv6_debug_t g_ipv6_dbg;
+
+int net_ipv6_get_debug(net_ipv6_debug_t *out) {
+    if (!out) return -1;
+    memcpy_u8((uint8_t *)out, (const uint8_t *)&g_ipv6_dbg, sizeof(g_ipv6_dbg));
+    return 0;
+}
+
 /* One in-flight ping6 waiter (enough for early bring-up). */
 static int g_ping_inflight = 0;
 static int g_ping_proc_idx = -1;
@@ -304,6 +313,7 @@ void net_ipv6_ping6_cancel(int proc_idx) {
 static int ipv6_select_next_hop(const netif_t *nif, const uint8_t dst_ip[16], uint8_t out_nh_ip[16]);
 static const uint8_t *ipv6_select_src_ip(const netif_t *nif, const uint8_t dst_ip[16]);
 static int send_neighbor_solicitation(netif_t *nif, const uint8_t target_ip[16]);
+static int send_router_solicitation(netif_t *nif);
 
 /* UDP6 sockets.
  *
@@ -493,6 +503,14 @@ int net_udp6_sendto(uint32_t sock_id,
 
     /* If we're asked to send off-link before SLAAC/default router is learned, let userland retry. */
     if (!ipv6_is_linklocal(dst_ip) && !ipv6_is_multicast(dst_ip) && !nif->ipv6_global_valid) {
+        uint64_t now = time_now_ns();
+        if (now != 0) {
+            uint64_t last = nif->ipv6_last_rs_ns;
+            if (last == 0 || now - last >= 250000000ull) {
+                (void)send_router_solicitation(nif);
+                nif->ipv6_last_rs_ns = now;
+            }
+        }
         return -(int)EAGAIN;
     }
 
@@ -829,6 +847,9 @@ static void maybe_kick_ping_after_nd_update(const uint8_t updated_ip[16]) {
 }
 
 void net_ipv6_init(void) {
+    for (size_t i = 0; i < sizeof(g_ipv6_dbg); i++) {
+        ((uint8_t *)&g_ipv6_dbg)[i] = 0;
+    }
     for (int i = 0; i < ND_CACHE_SIZE; i++) g_nd[i].used = 0;
     g_ping_inflight = 0;
     g_ping_proc_idx = -1;
@@ -845,6 +866,7 @@ void net_ipv6_configure_netif(netif_t *nif) {
 
     /* Best-effort: kick Router Solicitation to speed up SLAAC in TAP setups. */
     (void)send_router_solicitation(nif);
+    nif->ipv6_last_rs_ns = time_now_ns();
 }
 
 int net_ipv6_ping6_start(int proc_idx, netif_t *nif, const uint8_t dst_ip[16], uint16_t ident, uint16_t seq) {
@@ -859,7 +881,20 @@ int net_ipv6_ping6_start(int proc_idx, netif_t *nif, const uint8_t dst_ip[16], u
     int dst_is_mcast = ipv6_is_multicast(dst_ip);
     if (!ipv6_is_linklocal(dst_ip) && !dst_is_mcast) {
         /* Off-link/global requires us to have a configured global address. */
-        if (!nif->ipv6_global_valid) return -(int)EAGAIN;
+        if (!nif->ipv6_global_valid) {
+            /* We might have sent an RS very early (before the host TAP router was ready).
+             * Re-send RS occasionally so short ping timeouts still converge quickly.
+             */
+            uint64_t now = time_now_ns();
+            if (now != 0) {
+                uint64_t last = nif->ipv6_last_rs_ns;
+                if (last == 0 || now - last >= 250000000ull) {
+                    (void)send_router_solicitation(nif);
+                    nif->ipv6_last_rs_ns = now;
+                }
+            }
+            return -(int)EAGAIN;
+        }
     }
 
     if (g_ping_inflight) {
@@ -925,8 +960,11 @@ void net_ipv6_input(netif_t *nif, const uint8_t src_mac[6], const uint8_t *pkt, 
     if (!nif || !src_mac || !pkt) return;
     if (len < sizeof(ipv6_hdr_t)) {
         nif->rx_drops++;
+        g_ipv6_dbg.rx_drop_short++;
         return;
     }
+
+    g_ipv6_dbg.rx_ipv6_packets++;
 
     const ipv6_hdr_t *ip6 = (const ipv6_hdr_t *)pkt;
     uint32_t vtcfl = ((uint32_t)pkt[0] << 24) | ((uint32_t)pkt[1] << 16) | ((uint32_t)pkt[2] << 8) | (uint32_t)pkt[3];
@@ -936,6 +974,7 @@ void net_ipv6_input(netif_t *nif, const uint8_t src_mac[6], const uint8_t *pkt, 
     uint16_t payload_len = be16_load((const uint8_t *)&ip6->payload_len_be);
     if ((size_t)payload_len + sizeof(ipv6_hdr_t) > len) {
         nif->rx_drops++;
+        g_ipv6_dbg.rx_drop_len++;
         return;
     }
 
@@ -964,8 +1003,10 @@ void net_ipv6_input(netif_t *nif, const uint8_t src_mac[6], const uint8_t *pkt, 
     size_t pl_len = (size_t)payload_len;
 
     if (ip6->next_header == IPV6_NH_UDP) {
+        g_ipv6_dbg.rx_udp++;
         if (pl_len < sizeof(udp_hdr_t)) {
             nif->rx_drops++;
+            g_ipv6_dbg.rx_drop_short++;
             return;
         }
 
@@ -979,12 +1020,14 @@ void net_ipv6_input(netif_t *nif, const uint8_t src_mac[6], const uint8_t *pkt, 
         uint16_t udp_len = be16_load((const uint8_t *)&uh->len_be);
         if (udp_len < sizeof(udp_hdr_t) || (size_t)udp_len > pl_len) {
             nif->rx_drops++;
+            g_ipv6_dbg.rx_drop_len++;
             return;
         }
 
         uint16_t got = (uint16_t)((uh->csum_be >> 8) | (uh->csum_be << 8));
         if (got == 0) {
             nif->rx_drops++;
+            g_ipv6_dbg.rx_drop_csum++;
             return;
         }
 
@@ -996,6 +1039,7 @@ void net_ipv6_input(netif_t *nif, const uint8_t src_mac[6], const uint8_t *pkt, 
             uint16_t exp = udp6_checksum(ip6->src, ip6->dst, tmp, (size_t)udp_len);
             if (exp != got) {
                 nif->rx_drops++;
+                g_ipv6_dbg.rx_drop_csum++;
                 return;
             }
         }
@@ -1006,6 +1050,7 @@ void net_ipv6_input(netif_t *nif, const uint8_t src_mac[6], const uint8_t *pkt, 
         const uint8_t *udp_payload = payload + sizeof(udp_hdr_t);
         size_t udp_payload_len = (size_t)udp_len - sizeof(udp_hdr_t);
         udp6_deliver(ip6->src, src_port, ip6->dst, dst_port, udp_payload, udp_payload_len);
+        g_ipv6_dbg.rx_udp_delivered++;
         return;
     }
 
@@ -1014,8 +1059,11 @@ void net_ipv6_input(netif_t *nif, const uint8_t src_mac[6], const uint8_t *pkt, 
         return;
     }
 
+    g_ipv6_dbg.rx_icmpv6++;
+
     if (pl_len < sizeof(icmpv6_hdr_t)) {
         nif->rx_drops++;
+        g_ipv6_dbg.rx_drop_short++;
         return;
     }
 
@@ -1032,15 +1080,33 @@ void net_ipv6_input(netif_t *nif, const uint8_t src_mac[6], const uint8_t *pkt, 
         uint16_t exp = icmpv6_checksum(ip6->src, ip6->dst, tmp, pl_len);
         if (exp != got) {
             nif->rx_drops++;
+            g_ipv6_dbg.rx_drop_csum++;
             return;
         }
     }
 
+    g_ipv6_dbg.last_icmp_type = icmp->type;
+    g_ipv6_dbg.last_hop_limit = ip6->hop_limit;
+
     if (icmp->type == ICMPV6_ROUTER_ADVERT) {
-        /* Basic RFC checks: hop limit 255, source is link-local. */
-        if (ip6->hop_limit != 255) return;
-        if (!ipv6_is_linklocal(ip6->src)) return;
-        if (icmp_body_len < 12) return;
+        g_ipv6_dbg.rx_icmpv6_ra++;
+        /* Basic RFC checks: hop limit 255, source is link-local.
+         * Note: Some host RA setups (observed with dnsmasq in our TAP workflow)
+         * transmit RAs with hop limit 64. Accept that as a pragmatic fallback
+         * so SLAAC works in development environments.
+         */
+        if (ip6->hop_limit != 255 && ip6->hop_limit != 64) {
+            g_ipv6_dbg.rx_icmpv6_ra_drop_hlim++;
+            return;
+        }
+        if (!ipv6_is_linklocal(ip6->src)) {
+            g_ipv6_dbg.rx_icmpv6_ra_drop_src++;
+            return;
+        }
+        if (icmp_body_len < 12) {
+            g_ipv6_dbg.rx_icmpv6_ra_drop_short++;
+            return;
+        }
 
         uint16_t router_lifetime = be16_load(icmp_body + 2);
         if (router_lifetime != 0) {
@@ -1114,6 +1180,7 @@ void net_ipv6_input(netif_t *nif, const uint8_t src_mac[6], const uint8_t *pkt, 
     }
 
     if (icmp->type == ICMPV6_NEIGHBOR_SOLICIT) {
+        g_ipv6_dbg.rx_icmpv6_ns++;
         if (icmp_body_len < 4 + 16) return;
         const uint8_t *target = icmp_body + 4;
 
@@ -1141,6 +1208,7 @@ void net_ipv6_input(netif_t *nif, const uint8_t src_mac[6], const uint8_t *pkt, 
     }
 
     if (icmp->type == ICMPV6_NEIGHBOR_ADVERT) {
+        g_ipv6_dbg.rx_icmpv6_na++;
         if (icmp_body_len < 4 + 16) return;
         const uint8_t *target = icmp_body + 4;
 
@@ -1164,6 +1232,7 @@ void net_ipv6_input(netif_t *nif, const uint8_t src_mac[6], const uint8_t *pkt, 
     }
 
     if (icmp->type == ICMPV6_ECHO_REQUEST) {
+        g_ipv6_dbg.rx_icmpv6_echo_req++;
         /* Reply only if destined to us. */
         const uint8_t *our_ip = 0;
         if (memeq(ip6->dst, nif->ipv6_ll, 16)) {
@@ -1179,6 +1248,7 @@ void net_ipv6_input(netif_t *nif, const uint8_t src_mac[6], const uint8_t *pkt, 
     }
 
     if (icmp->type == ICMPV6_ECHO_REPLY) {
+        g_ipv6_dbg.rx_icmpv6_echo_reply++;
         if (!g_ping_inflight || g_ping_phase != 2) return;
         if (!memeq(ip6->src, g_ping_dst_ip, 16)) return;
 

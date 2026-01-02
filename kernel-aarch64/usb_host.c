@@ -264,6 +264,10 @@ static int dwc2_out_xfer(uint32_t ch, uint8_t dev_addr, uint8_t ep, uint8_t ep_t
         hc_halt(ch);
         return -1;
     }
+    if (rc & HCINT_NAK) {
+        hc_halt(ch);
+        return -1;
+    }
     if (rc & (HCINT_STALL | HCINT_XACTERR | HCINT_BBLERR | HCINT_FRMOVRUN | HCINT_DATATGLERR)) {
         hc_halt(ch);
         return -1;

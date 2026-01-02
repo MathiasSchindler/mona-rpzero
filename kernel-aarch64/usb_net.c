@@ -32,6 +32,19 @@ typedef struct {
 
     uint32_t rndis_request_id;
 
+    /* Debug counters for RX path diagnosis (especially RNDIS). */
+    uint64_t rx_usb_xfers;
+    uint64_t rx_usb_bytes;
+    uint64_t rx_rndis_ok;
+    uint64_t rx_rndis_drop_small;
+    uint64_t rx_rndis_drop_type;
+    uint64_t rx_rndis_drop_bounds;
+    uint32_t last_got;
+    uint32_t last_msg_type;
+    uint32_t last_data_off;
+    uint32_t last_data_len;
+    uint16_t last_ethertype;
+
     netif_t nif;
 } usb_net_state_t;
 
@@ -379,6 +392,17 @@ static uint16_t le16(const uint8_t *p) {
     return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
 }
 
+static uint16_t be16(const uint8_t *p) {
+    return (uint16_t)(((uint16_t)p[0] << 8) | (uint16_t)p[1]);
+}
+
+static int looks_like_ipv6_eth_frame(const uint8_t *frame, uint32_t frame_len) {
+    if (!frame) return 0;
+    if (frame_len < 14u) return 0;
+    /* EtherType at bytes 12..13. */
+    return be16(frame + 12) == 0x86DDu;
+}
+
 static int parse_cdc_ecm(const usb_device_t *dev, cdc_ecm_info_t *out) {
     if (!dev || !out) return -1;
     out->ok = 0;
@@ -622,21 +646,78 @@ void usb_net_poll(void) {
 
     if (got == 0) return;
 
+    g_usbnet.rx_usb_xfers++;
+    g_usbnet.rx_usb_bytes += got;
+    g_usbnet.last_got = got;
+
     /* Toggle PID only on successful (non-NAK) transactions with data. */
     g_usbnet.in_pid = (g_usbnet.in_pid == USB_PID_DATA0) ? USB_PID_DATA1 : USB_PID_DATA0;
 
     if (g_usbnet.mode == USBNET_MODE_RNDIS) {
-        if (got < sizeof(rndis_packet_msg_t)) return;
+        if (got < sizeof(rndis_packet_msg_t)) {
+            g_usbnet.rx_rndis_drop_small++;
+            return;
+        }
         rndis_packet_msg_t *p = (rndis_packet_msg_t *)buf;
-        if (p->msg_type != 0x00000001u) return;
+        g_usbnet.last_msg_type = p->msg_type;
+        if (p->msg_type != 0x00000001u) {
+            g_usbnet.rx_rndis_drop_type++;
+            return;
+        }
 
         uint32_t data_len = p->data_len;
         uint32_t data_off = p->data_offset;
-        uint8_t *data = buf + 8u + data_off;
-        if ((uint64_t)(data - buf) + data_len > got) return;
 
+        g_usbnet.last_data_len = data_len;
+        g_usbnet.last_data_off = data_off;
+
+        /* RNDIS quirk tolerance:
+         * - Spec: DataOffset is from the start of the DataOffset field (offset 8).
+         * - Some implementations appear to treat it as from the start of the message.
+         * Try both and pick the one that looks like an Ethernet frame.
+         */
+        uint8_t *cand1 = buf + 8u + data_off;
+        uint8_t *cand2 = buf + data_off;
+
+        uint8_t *data = 0;
+        if ((uint64_t)(cand1 - buf) + data_len <= got && looks_like_ipv6_eth_frame(cand1, data_len)) {
+            data = cand1;
+        } else if ((uint64_t)(cand2 - buf) + data_len <= got && looks_like_ipv6_eth_frame(cand2, data_len)) {
+            data = cand2;
+        } else {
+            /* Fallback: keep the original spec interpretation if in-bounds. */
+            if ((uint64_t)(cand1 - buf) + data_len <= got) data = cand1;
+            else if ((uint64_t)(cand2 - buf) + data_len <= got) data = cand2;
+            else {
+                g_usbnet.rx_rndis_drop_bounds++;
+                return;
+            }
+        }
+
+        if (data_len >= 14u) {
+            g_usbnet.last_ethertype = be16(data + 12);
+        }
+
+        g_usbnet.rx_rndis_ok++;
         netif_rx_frame(&g_usbnet.nif, data, (size_t)data_len);
     } else {
         netif_rx_frame(&g_usbnet.nif, buf, (size_t)got);
     }
+}
+
+int usb_net_get_debug(usb_net_debug_t *out) {
+    if (!out || !g_usbnet.bound) return -1;
+
+    out->rx_usb_xfers = g_usbnet.rx_usb_xfers;
+    out->rx_usb_bytes = g_usbnet.rx_usb_bytes;
+    out->rx_rndis_ok = g_usbnet.rx_rndis_ok;
+    out->rx_rndis_drop_small = g_usbnet.rx_rndis_drop_small;
+    out->rx_rndis_drop_type = g_usbnet.rx_rndis_drop_type;
+    out->rx_rndis_drop_bounds = g_usbnet.rx_rndis_drop_bounds;
+    out->last_got = g_usbnet.last_got;
+    out->last_msg_type = g_usbnet.last_msg_type;
+    out->last_data_off = g_usbnet.last_data_off;
+    out->last_data_len = g_usbnet.last_data_len;
+    out->last_ethertype = g_usbnet.last_ethertype;
+    return 0;
 }

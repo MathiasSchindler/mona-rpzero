@@ -4,6 +4,10 @@
 #include "time.h"
 #include "uart_pl011.h"
 
+#if defined(ENABLE_USB_KBD) || defined(ENABLE_USB_NET)
+#include "usb.h"
+#endif
+
 /*
  * BCM2836/BCM2710 local peripherals base.
  *
@@ -54,6 +58,14 @@ void irq_handle(void) {
     if (src & (1u << 1)) {
         /* AArch64 physical timer IRQ. Acknowledge and (re)arm as needed. */
         time_tick_handle_irq();
+
+#if defined(ENABLE_USB_KBD) || defined(ENABLE_USB_NET)
+        /* USB devices are polled (QEMU DWC2 model). Poll from the timer IRQ so
+         * we keep receiving packets/keys even when no syscall-driven polling is
+         * happening.
+         */
+        usb_poll();
+#endif
     }
 
     /* Peripheral IRQs (e.g. UART RX). */

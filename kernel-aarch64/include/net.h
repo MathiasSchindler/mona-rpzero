@@ -44,6 +44,9 @@ struct netif {
     uint8_t ipv6_router_ll[16];
     uint8_t ipv6_router_valid;
 
+    /* Best-effort RS throttling (ns since boot). */
+    uint64_t ipv6_last_rs_ns;
+
     /* Phase 6: RDNSS (Recursive DNS Server) from RA (RFC 8106), best-effort. */
     uint8_t ipv6_dns[16];
     uint8_t ipv6_dns_valid;

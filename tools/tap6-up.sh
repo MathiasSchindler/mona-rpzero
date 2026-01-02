@@ -34,6 +34,8 @@ DEBUG="${MONA_TAP_DEBUG:-0}"
 STATE_DIR="/tmp/mona-tap6-${IFNAME}"
 DNSMASQ_PIDFILE="$STATE_DIR/dnsmasq.pid"
 DNSMASQ_DUMPFILE="$STATE_DIR/dnsmasq.pcap"
+TCPDUMP_PIDFILE="$STATE_DIR/tcpdump.pid"
+TCPDUMP_PCAPFILE="$STATE_DIR/tap.pcap"
 
 if [[ $EUID -ne 0 ]]; then
   echo "This script must run as root." >&2
@@ -95,6 +97,25 @@ log-debug
 EOF
 fi
 
+# Optional: full link capture (RS/RA/NS/NA + DNS) for debugging.
+if [[ "$DEBUG" == "1" ]]; then
+  if command -v tcpdump >/dev/null 2>&1; then
+    if [[ -f "$TCPDUMP_PIDFILE" ]]; then
+      oldpid="$(cat "$TCPDUMP_PIDFILE" || true)"
+      if [[ -n "$oldpid" ]]; then
+        kill "$oldpid" 2>/dev/null || true
+      fi
+    fi
+
+    # Capture ICMPv6 (NDP/RA/ping) and DNS, without name resolution.
+    # Run in background and record pid for teardown.
+    tcpdump -n -U -i "$IFNAME" -w "$TCPDUMP_PCAPFILE" '(icmp6 or (udp port 53))' >/dev/null 2>&1 &
+    echo $! >"$TCPDUMP_PIDFILE"
+  else
+    echo "WARN: tcpdump not found; MONA_TAP_DEBUG will only dump dnsmasq RAs." >&2
+  fi
+fi
+
 # Stop previous instance if present.
 if [[ -f "$DNSMASQ_PIDFILE" ]]; then
   oldpid="$(cat "$DNSMASQ_PIDFILE" || true)"
@@ -143,6 +164,8 @@ OK: TAP IPv6 network is up
 - DNS:        $HOST_IP (dnsmasq)
 - NAT66:      $ENABLE_NAT66
  - Debug:      $DEBUG
+ - Pcap:       $TCPDUMP_PCAPFILE
+ - dnsmasq pcap (RA-only): $DNSMASQ_DUMPFILE
 
 Next (QEMU):
   make run USB_NET=1 USB_NET_BACKEND=tap TAP_IF=$IFNAME
