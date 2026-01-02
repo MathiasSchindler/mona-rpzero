@@ -32,6 +32,9 @@ void net_ipv6_input(netif_t *nif, const uint8_t src_mac[6], const uint8_t *pkt, 
  */
 int net_ipv6_ping6_start(int proc_idx, netif_t *nif, const uint8_t dst_ip[16], uint16_t ident, uint16_t seq);
 
+/* Cancel an in-flight ping started for proc_idx (best-effort). */
+void net_ipv6_ping6_cancel(int proc_idx);
+
 #ifdef __cplusplus
 }
 #endif

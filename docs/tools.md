@@ -222,3 +222,5 @@ then QEMU doesn’t have permission to create/configure a TAP device.
 ### Note on “getting packets to/from the outside”
 
 Creating a TAP only gives you a host L2 interface. To reach the wider network you typically bridge it (or route/NAT) and/or run a router advertisement daemon on the host.
+
+For QEMU *user-mode* networking (`USB_NET_BACKEND=user`), Router Advertisements typically do **not** include RDNSS. In that mode QEMU commonly provides an IPv6 DNS server at `fec0::3` (slirp DNS). The userland `dns6`/`ping6` defaults try RA RDNSS first, then `fec0::3`, then fall back to Google DNS.

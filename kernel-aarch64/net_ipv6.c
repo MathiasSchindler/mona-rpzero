@@ -289,6 +289,17 @@ static void ping_complete(uint64_t ret, uint64_t rtt_ns) {
     g_ping_phase = 0;
 }
 
+void net_ipv6_ping6_cancel(int proc_idx) {
+    if (!g_ping_inflight) return;
+    if (g_ping_proc_idx < 0 || g_ping_proc_idx >= (int)MAX_PROCS) return;
+    if (g_ping_proc_idx != proc_idx) return;
+
+    g_ping_inflight = 0;
+    g_ping_proc_idx = -1;
+    g_ping_nif = 0;
+    g_ping_phase = 0;
+}
+
 /* Forward declarations for helpers used by UDP6 (defined later in this file). */
 static int ipv6_select_next_hop(const netif_t *nif, const uint8_t dst_ip[16], uint8_t out_nh_ip[16]);
 static const uint8_t *ipv6_select_src_ip(const netif_t *nif, const uint8_t dst_ip[16]);
@@ -501,7 +512,25 @@ int net_udp6_sendto(uint32_t sock_id,
 
     if (nd_lookup_mac(nh_ip, dst_mac) != 0) {
         (void)send_neighbor_solicitation(nif, nh_ip);
-        return -(int)EAGAIN;
+
+        /*
+         * Some environments (notably QEMU user-mode networking) may not respond
+         * to NDP for certain on-link-looking addresses (e.g. fec0::3 DNS).
+         * If we have a default router with a known MAC, fall back to that MAC
+         * as a best-effort L2 next hop.
+         */
+        if (nif->ipv6_router_valid && memeq(nh_ip, dst_ip, 16) &&
+            !ipv6_is_linklocal(dst_ip) && !ipv6_is_multicast(dst_ip)) {
+            uint8_t rmac[6];
+            if (nd_lookup_mac(nif->ipv6_router_ll, rmac) == 0) {
+                memcpy_u8(dst_mac, rmac, 6);
+            } else {
+                (void)send_neighbor_solicitation(nif, nif->ipv6_router_ll);
+                return -(int)EAGAIN;
+            }
+        } else {
+            return -(int)EAGAIN;
+        }
     }
 
     const uint8_t *src_ip = ipv6_select_src_ip(nif, dst_ip);
@@ -856,6 +885,17 @@ int net_ipv6_ping6_start(int proc_idx, netif_t *nif, const uint8_t dst_ip[16], u
         p->ping6_start_ns = time_now_ns();
         g_ping_phase = 2;
         return send_echo_request(nif, dst_ip, mac, ident, seq);
+    }
+
+    /* Best-effort fallback: use router MAC as L2 next hop for unresolved on-link addresses. */
+    if (nif->ipv6_router_valid && memeq(nh_ip, dst_ip, 16) &&
+        !ipv6_is_linklocal(dst_ip) && !ipv6_is_multicast(dst_ip)) {
+        if (nd_lookup_mac(nif->ipv6_router_ll, mac) == 0) {
+            proc_t *p = &g_procs[proc_idx];
+            p->ping6_start_ns = time_now_ns();
+            g_ping_phase = 2;
+            return send_echo_request(nif, dst_ip, mac, ident, seq);
+        }
     }
 
     /* Neighbor unknown: start NDP. */

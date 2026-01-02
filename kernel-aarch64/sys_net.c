@@ -342,6 +342,7 @@ retry_wait:
             cur->ping6_done = 1;
             cur->ping6_ret = (uint64_t)(-(int64_t)ETIMEDOUT);
             cur->ping6_rtt_ns = 0;
+            net_ipv6_ping6_cancel(g_cur_proc);
         } else {
             /* Still pending: keep waiting. */
             goto retry_wait;

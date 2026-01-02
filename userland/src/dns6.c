@@ -44,6 +44,16 @@ static void write_u64_dec(uint64_t v) {
     (void)sys_write(1, buf, n);
 }
 
+static uint64_t now_ms_monotonic(void) {
+    linux_timespec_t ts;
+    if ((int64_t)sys_clock_gettime(1, &ts) < 0) {
+        return 0;
+    }
+    uint64_t s = (ts.tv_sec < 0) ? 0 : (uint64_t)ts.tv_sec;
+    uint64_t ns = (ts.tv_nsec < 0) ? 0 : (uint64_t)ts.tv_nsec;
+    return s * 1000ull + (ns / 1000000ull);
+}
+
 static int is_hex(char c) {
     return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
 }
@@ -98,6 +108,9 @@ static int parse_ipv6(const char *s, uint8_t out[16]) {
         words[nwords++] = (uint16_t)v;
 
         if (*p == ':') {
+            if (p[1] == ':') {
+                continue;
+            }
             p++;
             if (*p == '\0') return -1;
         }
@@ -229,7 +242,7 @@ static int dns_skip_name(const uint8_t *msg, uint64_t msg_len, uint64_t off, uin
 
 static void usage(void) {
     write_all("usage: dns6 <name> [dns_server_ipv6] [timeout_ms]\n");
-    write_all("  default server: RA RDNSS, else 2001:4860:4860::8888 (Google)\n");
+    write_all("  default server: RA RDNSS, else fec0::3 (QEMU slirp), else 2001:4860:4860::8888 (Google)\n");
 }
 
 int main(int argc, char **argv, char **envp) {
@@ -251,8 +264,9 @@ int main(int argc, char **argv, char **envp) {
     } else {
         /* Prefer RA-learned DNS server (RDNSS). Fallback to Google DNS. */
         if (sys_mona_net6_get_dns(dns_ip) != 0) {
-            const uint8_t def[16] = {0x20,0x01,0x48,0x60,0x48,0x60,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x88,0x88};
-            for (int i = 0; i < 16; i++) dns_ip[i] = def[i];
+            /* QEMU user-mode networking (slirp) commonly provides an IPv6 DNS server at fec0::3. */
+            const uint8_t slirp[16] = {0xfe,0xc0,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x03};
+            for (int i = 0; i < 16; i++) dns_ip[i] = slirp[i];
         }
     }
 
@@ -317,7 +331,14 @@ int main(int argc, char **argv, char **envp) {
     off += 4;
 
     /* Send (retry on EAGAIN due to NDP) */
+    uint64_t start_ms = now_ms_monotonic();
     for (;;) {
+        uint64_t elapsed_ms = now_ms_monotonic() - start_ms;
+        if (elapsed_ms >= timeout_ms) {
+            write_all("dns6: sendto timed out\n");
+            return 1;
+        }
+
         uint64_t rc = sys_mona_udp6_sendto(fd, dns_ip, DNS_PORT, msg, off);
         if ((int64_t)rc == -(int64_t)11) {
             /* EAGAIN: neighbor unresolved */
@@ -339,7 +360,15 @@ int main(int argc, char **argv, char **envp) {
     uint8_t rx[DNS_MAX_MSG];
     uint8_t src_ip[16];
     uint16_t src_port = 0;
-    uint64_t n = sys_mona_udp6_recvfrom(fd, rx, sizeof(rx), src_ip, &src_port, timeout_ms);
+
+    uint64_t elapsed_ms = now_ms_monotonic() - start_ms;
+    uint64_t remain_ms = (elapsed_ms >= timeout_ms) ? 0 : (timeout_ms - elapsed_ms);
+    if (remain_ms == 0) {
+        write_all("dns6: timed out\n");
+        return 1;
+    }
+
+    uint64_t n = sys_mona_udp6_recvfrom(fd, rx, sizeof(rx), src_ip, &src_port, remain_ms);
     if ((int64_t)n < 0) {
         write_all("dns6: recvfrom failed errno=");
         write_u64_dec((uint64_t)(-(int64_t)n));

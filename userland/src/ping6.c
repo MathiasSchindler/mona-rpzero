@@ -76,7 +76,7 @@ static int parse_ipv6(const char *s, uint8_t out[16]) {
     while (*p != '\0') {
         if (nwords >= 8) return -1;
 
-        /* Handle '::' in the middle. */
+        /* Handle '::' (zero-compression). */
         if (*p == ':') {
             if (p[1] != ':') return -1;
             if (compress_at >= 0) return -1;
@@ -101,6 +101,10 @@ static int parse_ipv6(const char *s, uint8_t out[16]) {
         words[nwords++] = (uint16_t)v;
 
         if (*p == ':') {
+            /* If this is '::', don't consume a single ':' here. */
+            if (p[1] == ':') {
+                continue;
+            }
             p++;
             if (*p == '\0') return -1;
         }
@@ -178,8 +182,9 @@ int main(int argc, char **argv, char **envp) {
             }
         } else {
             if (sys_mona_net6_get_dns(dns_ip) != 0) {
-                const uint8_t def[16] = {0x20,0x01,0x48,0x60,0x48,0x60,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x88,0x88};
-                for (int i = 0; i < 16; i++) dns_ip[i] = def[i];
+                /* QEMU user-mode networking (slirp) commonly provides an IPv6 DNS server at fec0::3. */
+                const uint8_t slirp[16] = {0xfe,0xc0,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x03};
+                for (int i = 0; i < 16; i++) dns_ip[i] = slirp[i];
             }
         }
 

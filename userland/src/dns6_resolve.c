@@ -76,6 +76,9 @@ int parse_ipv6_literal(const char *s, uint8_t out[16]) {
         words[nwords++] = (uint16_t)v;
 
         if (*p == ':') {
+            if (p[1] == ':') {
+                continue;
+            }
             p++;
             if (*p == '\0') return -1;
         }
@@ -110,6 +113,16 @@ static uint16_t be16_load(const uint8_t *p) {
 static void be16_store(uint8_t *p, uint16_t v) {
     p[0] = (uint8_t)(v >> 8);
     p[1] = (uint8_t)(v & 0xff);
+}
+
+static uint64_t now_ms_monotonic(void) {
+    linux_timespec_t ts;
+    if ((int64_t)sys_clock_gettime(1, &ts) < 0) {
+        return 0;
+    }
+    uint64_t s = (ts.tv_sec < 0) ? 0 : (uint64_t)ts.tv_sec;
+    uint64_t ns = (ts.tv_nsec < 0) ? 0 : (uint64_t)ts.tv_nsec;
+    return s * 1000ull + (ns / 1000000ull);
 }
 
 static int dns_encode_name(const char *name, uint8_t *out, uint64_t out_cap, uint64_t *out_len) {
@@ -210,7 +223,11 @@ int dns6_resolve_aaaa_one(const char *name, const uint8_t dns_ip[16], uint64_t t
     be16_store(msg + off + 2, 1);
     off += 4;
 
+    uint64_t start_ms = now_ms_monotonic();
     for (;;) {
+        uint64_t elapsed_ms = now_ms_monotonic() - start_ms;
+        if (elapsed_ms >= timeout_ms) return -(int)110; /* ETIMEDOUT */
+
         uint64_t rc = sys_mona_udp6_sendto(fd, dns_ip, 53, msg, off);
         if ((int64_t)rc == -(int64_t)11) {
             linux_timespec_t ts;
@@ -226,7 +243,12 @@ int dns6_resolve_aaaa_one(const char *name, const uint8_t dns_ip[16], uint64_t t
     uint8_t rx[DNS_MAX_MSG];
     uint8_t src_ip[16];
     uint16_t src_port = 0;
-    uint64_t n = sys_mona_udp6_recvfrom(fd, rx, sizeof(rx), src_ip, &src_port, timeout_ms);
+
+    uint64_t elapsed_ms = now_ms_monotonic() - start_ms;
+    uint64_t remain_ms = (elapsed_ms >= timeout_ms) ? 0 : (timeout_ms - elapsed_ms);
+    if (remain_ms == 0) return -(int)110; /* ETIMEDOUT */
+
+    uint64_t n = sys_mona_udp6_recvfrom(fd, rx, sizeof(rx), src_ip, &src_port, remain_ms);
     if ((int64_t)n < 0) return (int)n;
     if (n < sizeof(dns_hdr_t)) return -71; /* EPROTO */
 
