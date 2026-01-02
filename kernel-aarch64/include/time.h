@@ -30,3 +30,6 @@ void time_tick_schedule_oneshot_ns(uint64_t delta_ns);
 
 /* Called from the timer IRQ handler to acknowledge and rearm/disable as needed. */
 void time_tick_handle_irq(void);
+
+/* Disable the timer interrupt source (used when waiting only for IRQ-driven IO). */
+void time_tick_disable(void);

@@ -33,3 +33,6 @@ int console_in_try_getc(char *out);
  * This helper remains a spin-based fallback.
  */
 char console_in_getc_blocking(void);
+
+/* Returns 1 if any configured input backend requires polling (e.g. USB kbd). */
+int console_in_needs_polling(void);

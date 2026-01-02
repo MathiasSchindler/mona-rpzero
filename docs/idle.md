@@ -126,8 +126,9 @@ This is the current status of the Option C steps in this repo:
   - Input buffering helpers are provided by `console_in_has_data()` / `console_in_pop()` in [kernel-aarch64/console_in.c](kernel-aarch64/console_in.c).
 
 - **Step 6 (tickless idle): implemented (sleepers-only)**
-  - When the system has sleepers but no runnable tasks and no blocked console I/O, the scheduler programs a **one-shot** timer for the earliest sleep deadline, then executes `wfi`.
-  - If console I/O is blocked (meaning we still need to poll UART/USB keyboard input), the kernel keeps using a **periodic** tick.
+  - When the system has sleepers but no runnable tasks, the scheduler programs a **one-shot** timer for the earliest sleep deadline, then executes `wfi`.
+  - When the system is only blocked on stdin and the active input backend is **IRQ-driven** (PL011 UART RX), the kernel can disable the tick entirely and sleep in `wfi` until a UART IRQ arrives.
+  - If any configured input backend still requires polling (currently: USB keyboard), the kernel keeps using a **periodic** tick while stdin is blocked so polling can continue.
   - The policy is implemented in [kernel-aarch64/sched.c](kernel-aarch64/sched.c) and uses the timer helpers in [kernel-aarch64/time.c](kernel-aarch64/time.c).
 
 ### Step 2 — Introduce an “idle” primitive (safe building block)

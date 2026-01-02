@@ -165,3 +165,8 @@ void time_tick_handle_irq(void) {
         return;
     }
 }
+
+void time_tick_disable(void) {
+    write_cntp_ctl_el0(0ull);
+    g_tick_mode = TICK_MODE_DISABLED;
+}

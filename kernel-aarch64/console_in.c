@@ -82,3 +82,11 @@ char console_in_getc_blocking(void) {
     }
     return c;
 }
+
+int console_in_needs_polling(void) {
+#ifdef ENABLE_USB_KBD
+    return 1;
+#else
+    return 0;
+#endif
+}

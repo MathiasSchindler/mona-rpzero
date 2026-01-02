@@ -9,10 +9,14 @@
 #define UART_LCRH 0x2Cu
 #define UART_CR   0x30u
 #define UART_IMSC 0x38u
+#define UART_MIS  0x40u
 #define UART_ICR  0x44u
 
 #define FR_TXFF (1u << 5)
 #define FR_RXFE (1u << 4)
+
+#define IMSC_RXIM (1u << 4)
+#define IMSC_RTIM (1u << 6)
 
 static void (*g_uart_mirror_putc)(char c) = 0;
 
@@ -107,4 +111,33 @@ char uart_getc_blocking(void) {
         /* spin */
     }
     return c;
+}
+
+void uart_irq_enable_rx(void) {
+    /* Clear any pending interrupts and enable RX-related ones.
+     * RXIM: receive FIFO level. RTIM: receive timeout.
+     */
+    *uart_reg(UART_ICR) = IMSC_RXIM | IMSC_RTIM;
+    *uart_reg(UART_IMSC) |= (IMSC_RXIM | IMSC_RTIM);
+}
+
+uint32_t uart_irq_handle_rx(void (*on_char)(char c)) {
+    if (!on_char) return 0;
+
+    uint32_t mis = *uart_reg(UART_MIS);
+    if ((mis & (IMSC_RXIM | IMSC_RTIM)) == 0) {
+        return 0;
+    }
+
+    uint32_t n = 0;
+    for (;;) {
+        char c;
+        if (!uart_try_getc(&c)) break;
+        on_char(c);
+        n++;
+    }
+
+    /* Ack RX-related interrupts. */
+    *uart_reg(UART_ICR) = IMSC_RXIM | IMSC_RTIM;
+    return n;
 }

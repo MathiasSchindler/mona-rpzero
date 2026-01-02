@@ -21,3 +21,10 @@ void uart_set_mirror(void (*mirror_putc)(char c));
 /* Blocking / non-blocking receive helpers (for stdin via read(0)). */
 int uart_try_getc(char *out);
 char uart_getc_blocking(void);
+
+/* IRQ-driven RX support (used to wake the kernel from `wfi` without polling). */
+void uart_irq_enable_rx(void);
+/* Drain RX FIFO if an RX-related interrupt is pending. Calls on_char for each byte.
+ * Returns the number of bytes drained.
+ */
+uint32_t uart_irq_handle_rx(void (*on_char)(char c));
