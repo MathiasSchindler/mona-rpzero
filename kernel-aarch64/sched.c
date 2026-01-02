@@ -130,36 +130,46 @@ int sched_pick_next_runnable(void) {
         }
 
         /* Tickless idle policy:
-         * - If sleepers exist: program a one-shot tick for the next deadline.
-         * - If only blocked console I/O exists:
-         *   - if input backends require polling, keep periodic ticks.
-         *   - else, disable the tick and wait for IRQ-driven input.
+         * - If sleepers exist: wake at the earliest sleep deadline.
+         * - If blocked console I/O exists:
+         *   - for IRQ-driven input, no tick is needed (UART RX IRQ wakes us).
+         *   - for polling input (USB kbd), also wake at the next poll deadline.
+         *
+         * When both sleepers and polling I/O exist, we must wake for the
+         * earliest of (sleep deadline, poll deadline) to keep input responsive.
          */
-        if (has_sleepers) {
-            uint64_t now = time_now_ns();
-            if (earliest > now) {
-                time_tick_schedule_oneshot_ns(earliest - now);
-            } else {
-                /* Deadline already passed; loop will wake sleepers. */
-                time_tick_schedule_oneshot_ns(1);
-            }
-        } else if (has_blocked_io) {
-            if (!console_in_needs_polling()) {
-                /* IRQ-driven input (e.g. UART RX) will wake us without a tick. */
+        if (has_blocked_io && !console_in_needs_polling()) {
+            if (!has_sleepers) {
+                /* Only IRQ-driven input can wake us; no tick required. */
                 time_tick_disable();
+            }
+        } else {
+            uint64_t now = time_now_ns();
+            if (now == 0) {
+                /* If we can't compute deadlines, keep a periodic tick. */
+                time_tick_enable_periodic();
             } else {
-                /* Polling backends (USB kbd): wake up only when polling is due. */
-                uint64_t now = time_now_ns();
-                uint64_t next = console_in_next_poll_deadline_ns();
-                if (now != 0 && next != 0) {
-                    if (next > now) {
-                        time_tick_schedule_oneshot_ns(next - now);
-                    } else {
-                        time_tick_schedule_oneshot_ns(1);
+                uint64_t wake_ns = 0;
+                if (has_sleepers) {
+                    wake_ns = earliest;
+                }
+
+                if (has_blocked_io && console_in_needs_polling()) {
+                    uint64_t next_poll = console_in_next_poll_deadline_ns();
+                    if (next_poll == 0) {
+                        /* No deadline yet; wake immediately to establish one. */
+                        next_poll = now;
                     }
+                    if (wake_ns == 0 || next_poll < wake_ns) {
+                        wake_ns = next_poll;
+                    }
+                }
+
+                if (wake_ns > now) {
+                    time_tick_schedule_oneshot_ns(wake_ns - now);
                 } else {
-                    /* Fallback: if we can't compute deadlines, keep a periodic tick. */
-                    time_tick_enable_periodic();
+                    /* Deadline already passed; handle it on the next loop. */
+                    time_tick_schedule_oneshot_ns(1);
                 }
             }
         }
