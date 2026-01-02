@@ -20,6 +20,10 @@ static uint16_t be16_load(const uint8_t *p) {
     return (uint16_t)(((uint16_t)p[0] << 8) | (uint16_t)p[1]);
 }
 
+static uint32_t be32_load(const uint8_t *p) {
+    return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | (uint32_t)p[3];
+}
+
 static void be16_store(uint8_t *p, uint16_t v) {
     p[0] = (uint8_t)((v >> 8) & 0xff);
     p[1] = (uint8_t)(v & 0xff);
@@ -1004,6 +1008,27 @@ void net_ipv6_input(netif_t *nif, const uint8_t src_mac[6], const uint8_t *pkt, 
                     uart_write(" router=");
                     uart_write_ipv6_hex(nif->ipv6_router_ll);
                     uart_write("\n");
+                }
+            } else if (opt_type == 25 && opt_bytes >= 24) {
+                /* RDNSS (RFC 8106): type=25, len, 2B reserved, 4B lifetime, then 1+ IPv6 addrs. */
+                uint32_t lifetime_s = be32_load(opt + 4);
+                size_t addr_bytes = opt_bytes - 8u;
+                size_t addr_count = addr_bytes / 16u;
+                if (addr_count >= 1) {
+                    if (lifetime_s != 0) {
+                        memcpy_u8(nif->ipv6_dns, opt + 8, 16);
+                        nif->ipv6_dns_valid = 1;
+                        nif->ipv6_dns_lifetime_s = lifetime_s;
+
+                        uart_write("ipv6: rdnss dns=");
+                        uart_write_ipv6_hex(nif->ipv6_dns);
+                        uart_write(" lifetime_s=");
+                        uart_write_hex_u64((uint64_t)lifetime_s);
+                        uart_write("\n");
+                    } else {
+                        nif->ipv6_dns_valid = 0;
+                        nif->ipv6_dns_lifetime_s = 0;
+                    }
                 }
             }
 

@@ -259,8 +259,12 @@ uint64_t sys_nanosleep(trap_frame_t *tf, uint64_t req_user, uint64_t rem_user, u
      */
     if (cur->state == PROC_SLEEPING) {
         cur->state = PROC_RUNNABLE;
-        cur->sleep_deadline_ns = 0;
     }
+
+    /* Clear the sleep deadline regardless of whether the scheduler already
+     * transitioned us back to runnable.
+     */
+    cur->sleep_deadline_ns = 0;
 
     return 0;
 }

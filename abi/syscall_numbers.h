@@ -63,3 +63,6 @@
 #define __NR_mona_udp6_bind     4099ull
 #define __NR_mona_udp6_sendto   4100ull
 #define __NR_mona_udp6_recvfrom 4101ull
+
+/* mona-specific: query IPv6 Recursive DNS Server (RDNSS) learned via RA. */
+#define __NR_mona_net6_get_dns  4102ull

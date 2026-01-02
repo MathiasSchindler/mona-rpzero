@@ -17,7 +17,6 @@ static void sched_wake_sleepers(void) {
         if (g_procs[i].state != PROC_SLEEPING) continue;
         if (now >= g_procs[i].sleep_deadline_ns) {
             g_procs[i].state = PROC_RUNNABLE;
-            g_procs[i].sleep_deadline_ns = 0;
         }
     }
 }

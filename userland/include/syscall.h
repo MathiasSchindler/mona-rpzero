@@ -322,6 +322,11 @@ static inline uint64_t sys_mona_udp6_recvfrom(uint64_t fd,
                       timeout_ms);
 }
 
+/* mona-specific: fetch IPv6 DNS server (RDNSS) learned from RA. */
+static inline uint64_t sys_mona_net6_get_dns(uint8_t out_ip[16]) {
+    return __syscall1(__NR_mona_net6_get_dns, (uint64_t)(uintptr_t)out_ip);
+}
+
 __attribute__((noreturn)) static inline void sys_exit_group(uint64_t status) {
     (void)__syscall1(__NR_exit_group, status);
     for (;;) { }

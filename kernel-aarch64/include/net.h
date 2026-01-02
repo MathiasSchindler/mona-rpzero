@@ -44,6 +44,11 @@ struct netif {
     uint8_t ipv6_router_ll[16];
     uint8_t ipv6_router_valid;
 
+    /* Phase 6: RDNSS (Recursive DNS Server) from RA (RFC 8106), best-effort. */
+    uint8_t ipv6_dns[16];
+    uint8_t ipv6_dns_valid;
+    uint32_t ipv6_dns_lifetime_s;
+
     const netif_ops_t *ops;
     void *driver_ctx;
 

@@ -367,3 +367,24 @@ retry_wait:
 
     return ret;
 }
+
+uint64_t sys_mona_net6_get_dns(uint64_t out_ip_user) {
+    if (!user_range_ok(out_ip_user, 16)) {
+        return (uint64_t)(-(int64_t)EFAULT);
+    }
+
+    netif_t *nif = netif_get(0);
+    if (!nif) {
+        return (uint64_t)(-(int64_t)ENODEV);
+    }
+
+    if (!nif->ipv6_dns_valid) {
+        return (uint64_t)(-(int64_t)ENOENT);
+    }
+
+    if (write_bytes_to_user(out_ip_user, nif->ipv6_dns, 16) != 0) {
+        return (uint64_t)(-(int64_t)EFAULT);
+    }
+
+    return 0;
+}

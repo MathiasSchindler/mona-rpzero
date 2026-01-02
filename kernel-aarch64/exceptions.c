@@ -398,6 +398,10 @@ uint64_t exception_handle(trap_frame_t *tf,
             }
             break;
 
+        case __NR_mona_net6_get_dns:
+            ret = sys_mona_net6_get_dns(a0);
+            break;
+
         case __NR_exit:
         case __NR_exit_group:
             proc_trace("exit", g_procs[g_cur_proc].pid, a0);

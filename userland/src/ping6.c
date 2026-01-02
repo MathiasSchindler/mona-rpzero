@@ -1,5 +1,7 @@
 #include "syscall.h"
 
+int dns6_resolve_aaaa_one(const char *name, const uint8_t dns_ip[16], uint64_t timeout_ms, uint8_t out_ip[16]);
+
 static uint64_t cstr_len_u64_local(const char *s) {
     uint64_t n = 0;
     while (s && s[n] != '\0') n++;
@@ -126,11 +128,26 @@ static int parse_ipv6(const char *s, uint8_t out[16]) {
     return 0;
 }
 
+static void write_ipv6_full(const uint8_t ip[16]) {
+    static const char *hex = "0123456789abcdef";
+    char out[8 * 4 + 7];
+    uint64_t n = 0;
+    for (int w = 0; w < 8; w++) {
+        uint16_t v = (uint16_t)((uint16_t)ip[w * 2] << 8) | (uint16_t)ip[w * 2 + 1];
+        out[n++] = hex[(v >> 12) & 0xf];
+        out[n++] = hex[(v >> 8) & 0xf];
+        out[n++] = hex[(v >> 4) & 0xf];
+        out[n++] = hex[v & 0xf];
+        if (w != 7) out[n++] = ':';
+    }
+    (void)sys_write(1, out, n);
+}
+
 int main(int argc, char **argv, char **envp) {
     (void)envp;
 
     if (argc < 2) {
-        write_all("usage: ping6 <ipv6-addr> [count] [timeout_ms]\n");
+        write_all("usage: ping6 <ipv6-addr|hostname> [count] [timeout_ms] [dns_server_ipv6]\n");
         return 1;
     }
 
@@ -151,9 +168,38 @@ int main(int argc, char **argv, char **envp) {
     }
 
     uint8_t dst[16];
+
     if (parse_ipv6(argv[1], dst) != 0) {
-        write_all("ping6: invalid IPv6 address (try fe80::1)\n");
-        return 1;
+        uint8_t dns_ip[16];
+        if (argc >= 5) {
+            if (parse_ipv6(argv[4], dns_ip) != 0) {
+                write_all("ping6: invalid dns_server_ipv6\n");
+                return 1;
+            }
+        } else {
+            if (sys_mona_net6_get_dns(dns_ip) != 0) {
+                const uint8_t def[16] = {0x20,0x01,0x48,0x60,0x48,0x60,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x88,0x88};
+                for (int i = 0; i < 16; i++) dns_ip[i] = def[i];
+            }
+        }
+
+        write_all("ping6: dns server=");
+        write_ipv6_full(dns_ip);
+        write_all("\n");
+
+        int rc = dns6_resolve_aaaa_one(argv[1], dns_ip, timeout_ms, dst);
+        if (rc != 0) {
+            write_all("ping6: resolve failed errno=");
+            write_u64_dec((uint64_t)(-(int64_t)rc));
+            write_all("\n");
+            return 1;
+        }
+
+        write_all("ping6: resolved ");
+        write_all(argv[1]);
+        write_all(" -> ");
+        write_ipv6_full(dst);
+        write_all("\n");
     }
 
     uint16_t ident = (uint16_t)(sys_getpid() & 0xffffu);
