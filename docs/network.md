@@ -2,6 +2,12 @@
 
 This document is a step-by-step plan to implement an IPv6-only network stack in this repo.
 
+Project principles / constraints (important for all phases):
+- **No external dependencies** in kernel or userland.
+- **No external C library**: keep everything freestanding.
+- **Userland is syscall-only** wherever feasible (follow existing userland style).
+- **QEMU-first development**, but don’t paint ourselves into a corner: design so it ports cleanly to **real Raspberry Pi Zero 2 W hardware** later.
+
 Scope assumptions (adjust if you want something different):
 - **IPv6-only**: no IPv4, no dual-stack, no NAT64.
 - **Link layer**: Ethernet framing (including USB Ethernet class devices).
@@ -17,10 +23,10 @@ If you want a different definition of “full” (e.g., mandatory DHCPv6, MLDv2,
 
 1) **Confirm QEMU NIC strategy**
    - Enable USB NIC in QEMU: run with `USB_NET=1`.
-  - The QEMU wrapper supports two backends:
-    - **user** (default): `-netdev user,id=net0,ipv6=on -device usb-net,netdev=net0`
-    - **tap**: `-netdev tap,... -device usb-net,...` (see below)
-  - Select backend via `USB_NET_BACKEND=user|tap`.
+   - The QEMU wrapper supports two backends:
+     - **user** (default): `-netdev user,id=net0,ipv6=on -device usb-net,netdev=net0`
+     - **tap**: `-netdev tap,... -device usb-net,...` (see below)
+   - Select backend via `USB_NET_BACKEND=user|tap`.
    - Reality check: user-mode networking is great for “it works” smoke tests, but may be limited for advanced IPv6 scenarios.
 
 2) **Plan for “serious” IPv6 testing** (optional but recommended early)

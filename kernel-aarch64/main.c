@@ -10,9 +10,10 @@
 #include "termfb.h"
 #include "console_in.h"
 #include "irq.h"
+#include "net.h"
 
-#ifdef ENABLE_USB_KBD
-#include "usb_kbd.h"
+#if defined(ENABLE_USB_KBD) || defined(ENABLE_USB_NET)
+#include "usb.h"
 #endif
 
 #ifndef FB_REQ_W
@@ -43,6 +44,9 @@ extern unsigned char initramfs_end[];
 
 void kmain(unsigned long dtb_ptr) {
     uart_init();
+
+    /* Networking scaffolding (Phase 1). */
+    net_init();
 
     /* Time is used for polling timeouts (e.g. USB). */
     time_init();
@@ -102,13 +106,12 @@ void kmain(unsigned long dtb_ptr) {
             /* Quick ANSI smoke test (colors + reset). */
             termfb_write_ansi("\x1b[32mANSI ok\x1b[0m\n\n");
 
-        #ifdef ENABLE_USB_KBD
+        #if defined(ENABLE_USB_KBD) || defined(ENABLE_USB_NET)
             /*
-             * Experimental: USB HID boot keyboard input.
-             * Initialize after time + MMU, and after termfb is ready so logs are visible
-             * even if the QEMU UART backend is disabled.
+             * Experimental: polled USB devices (kbd + usb-net).
+             * Initialize after time + MMU, and after termfb is ready so logs are visible.
              */
-            usb_kbd_init();
+            usb_init();
         #endif
         }
     #endif

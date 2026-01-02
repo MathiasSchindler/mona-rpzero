@@ -37,9 +37,13 @@ OBJS := \
 	$(BUILD)/main.o \
 	$(BUILD)/exceptions.o \
 	$(BUILD)/irq.o \
+	$(BUILD)/net.o \
 	$(BUILD)/klog.o \
 	$(BUILD)/console_in.o \
+	$(BUILD)/usb.o \
+	$(BUILD)/usb_host.o \
 	$(BUILD)/usb_kbd.o \
+	$(BUILD)/usb_net.o \
 	$(BUILD)/time.o \
 	$(BUILD)/power.o \
 	$(BUILD)/mailbox.o \
@@ -107,7 +111,17 @@ $(BUILD)/console_in.o: console_in.c include/console_in.h include/time.h include/
 $(BUILD)/klog.o: klog.c include/klog.h include/stdint.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/usb_kbd.o: usb_kbd.c include/usb_kbd.h include/console_in.h include/time.h include/uart_pl011.h $(CONFIG_STAMP) | $(BUILD)
+
+$(BUILD)/usb.o: usb.c include/usb.h include/usb_host.h include/usb_kbd.h include/usb_net.h $(CONFIG_STAMP) | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/usb_host.o: usb_host.c include/usb_host.h include/stddef.h include/stdint.h include/mmu.h include/time.h include/uart_pl011.h $(CONFIG_STAMP) | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/usb_kbd.o: usb_kbd.c include/usb_kbd.h include/usb_host.h include/console_in.h include/uart_pl011.h $(CONFIG_STAMP) | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/usb_net.o: usb_net.c include/usb_net.h include/usb_host.h include/net.h include/uart_pl011.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/uart_pl011.o: uart_pl011.c include/uart_pl011.h $(CONFIG_STAMP) | $(BUILD)
@@ -137,6 +151,9 @@ $(BUILD)/exceptions.o: exceptions.c include/exceptions.h include/errno.h include
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/irq.o: irq.c include/irq.h include/time.h $(CONFIG_STAMP) | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/net.o: net.c include/net.h include/stddef.h include/stdint.h include/uart_pl011.h $(CONFIG_STAMP) | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/time.o: time.c include/time.h $(CONFIG_STAMP) | $(BUILD)

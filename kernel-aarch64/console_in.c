@@ -2,9 +2,9 @@
 
 #include "uart_pl011.h"
 
-#ifdef ENABLE_USB_KBD
+#if defined(ENABLE_USB_KBD) || defined(ENABLE_USB_NET)
 #include "time.h"
-#include "usb_kbd.h"
+#include "usb.h"
 #endif
 
 /* Keep it simple: single-producer/single-consumer under a cooperative kernel. */
@@ -67,17 +67,17 @@ void console_in_poll(void) {
         ring_push(c);
     }
 
-#ifdef ENABLE_USB_KBD
+#if defined(ENABLE_USB_KBD) || defined(ENABLE_USB_NET)
     uint64_t now = time_now_ns();
     if (now != 0) {
         if (g_next_poll_ns == 0 || now >= g_next_poll_ns) {
-            usb_kbd_poll();
+            usb_poll();
             /* Schedule the next poll. */
             g_next_poll_ns = now + CONSOLE_IN_POLL_INTERVAL_NS;
         }
     } else {
         /* If time isn't available, fall back to the original behavior. */
-        usb_kbd_poll();
+        usb_poll();
     }
 #endif
 
@@ -106,7 +106,7 @@ char console_in_getc_blocking(void) {
 }
 
 int console_in_needs_polling(void) {
-#ifdef ENABLE_USB_KBD
+#if defined(ENABLE_USB_KBD) || defined(ENABLE_USB_NET)
     return 1;
 #else
     return 0;
@@ -114,7 +114,7 @@ int console_in_needs_polling(void) {
 }
 
 uint64_t console_in_next_poll_deadline_ns(void) {
-#ifdef ENABLE_USB_KBD
+#if defined(ENABLE_USB_KBD) || defined(ENABLE_USB_NET)
     return g_next_poll_ns;
 #else
     return 0;
