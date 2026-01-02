@@ -49,7 +49,17 @@ USER_BASE ?= 0x0000000000400000
 
 .PHONY: all clean check-toolchain check-nolibc initramfs
 
-all: check-nolibc $(BUILD)/echo.bin $(BUILD)/true.bin $(BUILD)/false.bin $(BUILD)/cat.bin $(BUILD)/ls.bin $(BUILD)/pwd.bin $(BUILD)/pid.bin $(BUILD)/uname.bin $(BUILD)/mkdir.bin $(BUILD)/touch.bin $(BUILD)/rm.bin $(BUILD)/rmdir.bin $(BUILD)/seq.bin $(BUILD)/uniq.bin $(BUILD)/wc.bin $(BUILD)/grep.bin $(BUILD)/ps.bin $(BUILD)/kill.bin $(BUILD)/pstree.bin $(BUILD)/find.bin $(BUILD)/awk.bin $(BUILD)/basename.bin $(BUILD)/du.bin $(BUILD)/ln.bin $(BUILD)/tr.bin $(BUILD)/sed.bin $(BUILD)/cut.bin $(BUILD)/od.bin $(BUILD)/head.bin $(BUILD)/tail.bin $(BUILD)/sort.bin $(BUILD)/printf.bin $(BUILD)/tee.bin $(BUILD)/rev.bin $(BUILD)/env.bin $(BUILD)/dirname.bin $(BUILD)/time.bin $(BUILD)/dmesg.bin $(BUILD)/readelf.bin $(BUILD)/readlink.bin $(BUILD)/brk.bin $(BUILD)/mmap.bin $(BUILD)/cwd.bin $(BUILD)/tty.bin $(BUILD)/sleep.bin $(BUILD)/date.bin $(BUILD)/uptime.bin $(BUILD)/compat.bin $(BUILD)/kinit.bin $(BUILD)/sh.bin $(BUILD)/init.bin $(BUILD)/yes.bin $(BUILD)/diff.bin $(BUILD)/cp.bin $(BUILD)/mv.bin $(BUILD)/stat.bin $(BUILD)/which.bin $(BUILD)/chmod.bin $(BUILD)/clear.bin $(BUILD)/free.bin $(BUILD)/id.bin $(BUILD)/whoami.bin $(BUILD)/who.bin $(BUILD)/xxd.bin $(BUILD)/hexdump.bin $(BUILD)/xargs.bin $(BUILD)/test.bin $(BUILD)/objdump.bin $(BUILD)/ping6.bin $(BUILD)/udp6cat.bin $(BUILD)/dns6.bin
+all: check-nolibc $(BUILD)/echo.bin $(BUILD)/true.bin $(BUILD)/false.bin $(BUILD)/cat.bin $(BUILD)/ls.bin $(BUILD)/pwd.bin $(BUILD)/pid.bin $(BUILD)/uname.bin $(BUILD)/mkdir.bin $(BUILD)/touch.bin $(BUILD)/rm.bin $(BUILD)/rmdir.bin $(BUILD)/seq.bin $(BUILD)/uniq.bin $(BUILD)/wc.bin $(BUILD)/grep.bin $(BUILD)/ps.bin $(BUILD)/kill.bin $(BUILD)/pstree.bin $(BUILD)/find.bin $(BUILD)/awk.bin $(BUILD)/basename.bin $(BUILD)/du.bin $(BUILD)/ln.bin $(BUILD)/tr.bin $(BUILD)/sed.bin $(BUILD)/cut.bin $(BUILD)/od.bin $(BUILD)/head.bin $(BUILD)/tail.bin $(BUILD)/sort.bin $(BUILD)/printf.bin $(BUILD)/tee.bin $(BUILD)/rev.bin $(BUILD)/env.bin $(BUILD)/dirname.bin $(BUILD)/time.bin $(BUILD)/dmesg.bin $(BUILD)/readelf.bin $(BUILD)/readlink.bin $(BUILD)/brk.bin $(BUILD)/mmap.bin $(BUILD)/cwd.bin $(BUILD)/tty.bin $(BUILD)/sleep.bin $(BUILD)/date.bin $(BUILD)/uptime.bin $(BUILD)/compat.bin $(BUILD)/kinit.bin $(BUILD)/sh.bin $(BUILD)/init.bin $(BUILD)/yes.bin $(BUILD)/diff.bin $(BUILD)/cp.bin $(BUILD)/mv.bin $(BUILD)/stat.bin $(BUILD)/which.bin $(BUILD)/chmod.bin $(BUILD)/clear.bin $(BUILD)/free.bin $(BUILD)/id.bin $(BUILD)/whoami.bin $(BUILD)/who.bin $(BUILD)/xxd.bin $(BUILD)/hexdump.bin $(BUILD)/xargs.bin $(BUILD)/test.bin $(BUILD)/objdump.bin $(BUILD)/ping6.bin $(BUILD)/udp6cat.bin $(BUILD)/dns6.bin $(BUILD)/net6test.bin
+
+$(BUILD)/net6test.o: src/net6test.c include/syscall.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/net6test.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/net6test.o | check-toolchain
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
+
+$(BUILD)/net6test.bin: $(BUILD)/net6test.elf | check-toolchain
+	$(OBJCOPY) -O binary $< $@
 
 initramfs: $(BUILD)/initramfs.cpio
 
@@ -858,6 +868,7 @@ $(BUILD)/initramfs.cpio: $(TOOLS_DIR)/mkcpio_newc.py all | $(BUILD)
 	@cp "$(BUILD)/ping6.elf"  "$(INITRAMFS_ROOT)/bin/ping6"
 	@cp "$(BUILD)/udp6cat.elf"  "$(INITRAMFS_ROOT)/bin/udp6cat"
 	@cp "$(BUILD)/dns6.elf"  "$(INITRAMFS_ROOT)/bin/dns6"
+	@cp "$(BUILD)/net6test.elf"  "$(INITRAMFS_ROOT)/bin/net6test"
 	@cp "$(BUILD)/readelf.elf"  "$(INITRAMFS_ROOT)/bin/readelf"
 	@cp "$(BUILD)/readlink.elf"  "$(INITRAMFS_ROOT)/bin/readlink"
 	@cp "$(BUILD)/ps.elf"  "$(INITRAMFS_ROOT)/bin/ps"

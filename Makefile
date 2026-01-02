@@ -76,7 +76,7 @@ MONITOR ?= none
 USB_KBD_DEBUG ?= 0
 
 
-.PHONY: all run test clean help
+.PHONY: all run test test-net6 clean help
 .PHONY: aarch64-kernel test-aarch64 userland
 
 all: aarch64-kernel
@@ -166,6 +166,17 @@ run: userland
 
 test:
 	@$(MAKE) USERPROG=kinit test-aarch64
+
+test-net6: userland
+	@echo "Starting QEMU (raspi3b) IPv6 bringup test (TAP)"
+	@if [[ -z "$(DTB)" ]]; then \
+		echo "No DTB found. Put one into out/ or archive/, or pass DTB=..." >&2; \
+		echo "Tried: $(DTB_CANDIDATES)" >&2; \
+		exit 2; \
+	fi
+	@# Build kernel with USB_NET enabled and run the dedicated net6 test payload.
+	@$(MAKE) -C "$(AARCH64_DIR)" CROSS="$(AARCH64_CROSS)" USERPROG=net6test KERNEL_DEFS="-DQEMU_SEMIHOSTING -DENABLE_USB_NET" all
+	@DTB="$(DTB)" MEM="$(MEM)" KERNEL_IMG="$(AARCH64_IMG)" TAP_IF="$(TAP_IF)" tools/test-net6.sh "$(TAP_IF)"
 
 test-aarch64: userland
 	@echo "Starting QEMU (raspi3b) selftests"
