@@ -1,6 +1,7 @@
 # mona-rpzero — AArch64 Kernel Plan (QEMU → Raspberry Pi Zero 2 W)
 
 Date: 2025-12-25
+Last updated: 2026-01-02
 
 ## Long-term goal
 
@@ -142,195 +143,46 @@ Design choice:
 
 ## Phased roadmap (deliverables + acceptance tests)
 
-### Phase 0 — Serial “Hello world” + halt
+### Phases 0–7 — Core kernel milestones
 
-Status: DONE (2025-12-25)
+Status: DONE (2025-12-25 → 2025-12-27)
 
-Deliverables:
+This repo has already reached a strong “interactive minimal Linux-like environment” baseline in QEMU:
 
-- Minimal AArch64 entry + stack
-- PL011 UART init + `printk`
-- Parse DTB pointer (passed by QEMU/firmware) and print machine model
+Deliverables (high-level):
 
-Acceptance:
+- Boot in QEMU (`-M raspi3b`) with DTB parsing and early serial logs.
+- Exception handling + EL normalization with readable dumps.
+- PMM + MMU enabled (identity + higher-half mapping) and cache enablement.
+- Enter EL0 + Linux-like syscall ABI (`svc #0`, Linux AArch64 calling convention).
+- Initramfs (embedded CPIO `newc`) + read-only VFS + core file syscalls.
+- ELF64 `ET_EXEC` loader + `execve` + user stack/auxv.
+- Processes sufficient for a simple shell: `fork`/`wait4`.
+- Pipes: `pipe2` + `dup2` enabling pipelines.
 
-- `make run` prints a banner and halts cleanly in QEMU.
+Acceptance (representative):
 
-Notes:
-
-- Implemented in `kernel-aarch64/` and validated via `make run`.
-- DTB parsing prints `/model` and first RAM range from `/memory*/reg`.
-
-### Phase 1 — Exceptions + EL normalization
-
-Status: DONE (2025-12-25)
-
-Deliverables:
-
-- Vector table installed
-- Basic handlers for sync/irq/fiq/SError (dump ESR/ELR/FAR)
-- Determine current exception level and drop to EL1 (if starting higher)
-
-Acceptance:
-
-- Intentional fault produces a readable dump on serial, no silent reset.
-
-Notes:
-
-Implemented (summary):
-
-- EL normalization works (EL2→EL1 when applicable), with early `VBAR_EL1` installation.
-- Exception dumps are readable and include `ESR_EL1`, `ELR_EL1`, `FAR_EL1`, `SPSR_EL1`.
-
-### Phase 2 — Memory management baseline
-
-Status: DONE (basic) (2025-12-25)
-
-Deliverables:
-
-- Physical page allocator (PMM)
-- MMU enabled with a simple mapping strategy (e.g. identity map for early kernel + higher-half optional)
-- Safe separation of kernel vs user virtual ranges (even if userland comes later)
-
-Acceptance:
-
-- Kernel can allocate/free pages; basic paging works without crashes.
-
-Notes:
-
-Implemented (summary):
-
-- PMM initializes from DTB-reported RAM.
-- MMU + caches are enabled with identity + higher-half mapping; UART stays mapped as device memory.
-- User address space remains intentionally coarse; per-process TTBR0 switching exists but is not yet a full VM.
-
-### Phase 3 — Enter EL0 + minimal syscalls (`exit`, `write`)
-
-Status: DONE (2025-12-25)
-
-Deliverables:
-
-- Create an EL0 task with its own stack
-- Syscall entry via EL0 `svc #0`
-- Implement:
-  - `exit` / `exit_group`
-  - `write` to fd 1/2 (serial)
-
-Acceptance:
-
-- A tiny Linux-AArch64-style test binary prints to stdout and exits.
-
-Notes:
-
-Implemented (summary):
-
-- EL0 entry via `eret` and EL0 SVC handling is in place.
-- Minimal Linux-style syscall ABI works (initially `write` + `exit_group`) for syscall-only user payloads.
-
-### Phase 4 — Initramfs filesystem (CPIO `newc`)
-
-Status: DONE (2025-12-25)
-
-Deliverables:
-
-- Load/init CPIO archive from a known location (initially embedded; later from boot medium)
-- VFS read-only: path resolution + file read + directory listing
-- Syscalls (minimal set): `openat`, `close`, `read`, `newfstatat`, `getdents64`, `lseek`
-
-Acceptance:
-
-- `cat /hello.txt` works from initramfs.
-- `ls /` lists initramfs entries.
-
-Notes:
-
-Implemented (summary):
-
-- Initramfs (embedded CPIO `newc`) is wired in; host builder exists (`tools/mkcpio_newc.py`).
-- Read-only filesystem syscalls work (`openat/read/close/newfstatat/getdents64/lseek`) against initramfs.
-- User payload selection supports `make run USERPROG=...`.
-
-### Phase 5 — ELF loader + `execve`
-
-Status: DONE (2025-12-26)
-
-Deliverables:
-
-- ELF64 loader for `ET_EXEC` first (initramfs-backed)
-- `execve(221)` that replaces the current EL0 image
-- User stack setup for `execve(argv, envp)`
-- Minimal auxv (enough for static binaries)
-
-Acceptance:
-
-- `/init` in initramfs can `execve("/bin/ls", 0, 0)` and run it.
-- `/init` in initramfs can `execve("/bin/echo", ["echo","hello"], 0)` once argv is implemented.
-
-Notes:
-
-Implemented (summary):
-
-- ELF64 `ET_EXEC` loading from initramfs works, including stack setup for `argc/argv/envp` + minimal auxv.
-- Serial RX is wired to `read(0)` so interactive userland is possible.
-
-### Phase 6 — Processes: `fork` + `wait4`
-
-Status: DONE (minimal 2-process model) (2025-12-26)
-
-Deliverables:
-
-- Process table, PID allocation
-- `fork`/`wait4` semantics sufficient for a simple shell
-- Cooperative scheduler at syscall boundaries initially
-
-Acceptance:
-
-- `/bin/sh -c "/bin/echo hello"` works.
-
-Notes:
-
-Implemented (summary):
-
-- Process table + PID model exist.
-- `fork` (restricted `clone(SIGCHLD, ...)`) and `wait4` are sufficient for shell-style execution.
-
-### Phase 7 — Pipes + fd duplication
-
-Status: DONE (2025-12-27)
-
-Deliverables:
-
-- `pipe2`, `dup2`
-- Pipe buffers + blocking semantics (simple)
-
-Acceptance:
-
+- `make test` runs the in-guest selftests and exits cleanly.
 - `/bin/sh -c "/bin/echo hello | /bin/cat"` works.
-
-Notes:
-
-Implemented (summary):
-
-- `pipe2` + `dup2` enable simple pipelines.
-- Current pipe semantics are minimal (flags=0 only; `-EAGAIN` retry model in userland).
 
 ### Phase 8 — Compatibility hardening
 
-Status: IN PROGRESS (2025-12-27)
+Status: IN PROGRESS (2025-12-27 → )
 
 Deliverables:
 
-- Fill in common “small program” syscall gaps as they arise:
-  - `mmap/munmap` + `brk`
-  - `getpid/getppid`
-  - `getcwd/chdir`
-  - `uname`
-  - `clock_gettime`/`nanosleep` (monotonic + basic sleep)
-  - basic `ioctl` subset for tty detection
+- Fill in common “small program” syscall gaps as they arise.
+- Improve the “do nothing” story so QEMU doesn’t burn host CPU at an idle prompt:
+  - stdin reads truly block (no userland spin loops)
+  - `wfi` idle when nothing runnable
+  - timer wakeups for sleep deadlines (one-shot where possible)
+  - IRQ-driven wakeups for UART RX
+  - polling-only backends (USB keyboard) use cadence polling with one-shot wakeups
 
 Acceptance:
 
 - A curated set of static Linux AArch64 binaries runs unmodified.
+- In QEMU, sitting at a shell prompt should keep host CPU low.
 
 Notes:
 
@@ -344,6 +196,8 @@ Notes:
 - Implemented (minimal): `set_robust_list`, `rt_sigaction`, `rt_sigprocmask` (stubs to keep simple static runtimes happy).
 - Implemented (minimal): `getrandom` (xorshift-based bytes, not cryptographically secure).
 - Syscall-only tool status and smoke-test binaries are tracked in `tools.md`.
+
+- Low-CPU idle details are documented in [idle.md](idle.md).
 
 #### Phase 8 follow-up idea: syscall-only “tool suite” (monacc-style)
 
@@ -371,18 +225,20 @@ Suggested priority groups:
 
 This lets us keep Phase 8 focused: first build out Groups A/B to get a useful “coreutils-ish” baseline, then decide whether Group C should be done via a syscall or `/proc`.
 
-### Phase 9 — Move from QEMU to real Zero 2 W
+### Phase 9 — Pi Zero 2 W bring-up + validation
 
 Deliverables:
 
-- Boot reliably on hardware from FAT boot partition
-- Real UART mapping and clocking confirmed
-- Interrupt controller + timer validated on real SoC
-- Minimal SD/MMC read support **optional** (initramfs-only is acceptable initially)
+- Boot reliably on hardware from the FAT boot partition (firmware-loaded `kernel8.img`).
+- Confirm real-device UART mapping/clocking and get a stable interactive shell.
+- Validate timer + interrupt routing on the actual SoC.
+- Validate the idle strategy on real hardware (no missed wakeups; reasonable power/CPU behavior).
+- Minimal SD/MMC read support remains optional (initramfs-only is acceptable initially).
 
 Acceptance:
 
 - Same kernel image boots on the Pi Zero 2 W and provides an interactive shell over UART.
+- `sleep`/`nanosleep` works and input stays responsive.
 
 ## Key risks / unknowns (call these out early)
 
