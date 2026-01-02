@@ -9,6 +9,7 @@ set -euo pipefail
 IFNAME="${1:-${MONA_TAP_IF:-mona0}}"
 STATE_DIR="/tmp/mona-tap6-${IFNAME}"
 DNSMASQ_PIDFILE="$STATE_DIR/dnsmasq.pid"
+DNSMASQ_RESTART_PIDFILE="$STATE_DIR/dnsmasq-restarter.pid"
 TCPDUMP_PIDFILE="$STATE_DIR/tcpdump.pid"
 
 DNSMASQ_PCAPFILE="$STATE_DIR/dnsmasq.pcap"
@@ -22,6 +23,13 @@ fi
 
 if [[ -f "$DNSMASQ_PIDFILE" ]]; then
   pid="$(cat "$DNSMASQ_PIDFILE" || true)"
+  if [[ -n "$pid" ]]; then
+    kill "$pid" 2>/dev/null || true
+  fi
+fi
+
+if [[ -f "$DNSMASQ_RESTART_PIDFILE" ]]; then
+  pid="$(cat "$DNSMASQ_RESTART_PIDFILE" || true)"
   if [[ -n "$pid" ]]; then
     kill "$pid" 2>/dev/null || true
   fi

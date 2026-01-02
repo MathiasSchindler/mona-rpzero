@@ -77,6 +77,14 @@ int usb_host_control_xfer(uint8_t dev_addr, int low_speed, usb_setup_t setup,
 int usb_host_out_xfer(uint8_t dev_addr, int low_speed, usb_ep_t ep, uint32_t pid,
                       const uint8_t *data, uint32_t len);
 
+/* Return value from usb_host_in_xfer when nak_ok is enabled and no data was
+ * available within the short polling window (e.g. device NAK/timeout).
+ *
+ * Note: This is distinct from a successful transfer that completes with
+ * out_got == 0 (a valid ZLP), which should still advance DATA PID toggling.
+ */
+#define USB_XFER_NODATA 1
+
 int usb_host_in_xfer(uint8_t dev_addr, int low_speed, usb_ep_t ep, uint32_t pid,
                      uint8_t *out, uint32_t len, uint32_t *out_got, int nak_ok);
 

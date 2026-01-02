@@ -276,6 +276,7 @@ static uint8_t g_ping_nh_ip[16];
 static uint16_t g_ping_ident = 0;
 static uint16_t g_ping_seq = 0;
 static uint8_t g_ping_phase = 0; /* 0 idle, 1 waiting NA, 2 waiting echo */
+static uint8_t g_ping_debug_once = 0;
 
 static void ping_complete(uint64_t ret, uint64_t rtt_ns) {
     if (!g_ping_inflight || g_ping_proc_idx < 0) return;
@@ -1038,6 +1039,25 @@ int net_ipv6_ping6_start(int proc_idx, netif_t *nif, const uint8_t dst_ip[16], u
     }
     memcpy_u8(g_ping_nh_ip, nh_ip, 16);
 
+    if (!g_ping_debug_once) {
+        g_ping_debug_once = 1;
+        int pm = 0;
+        if (nif->ipv6_prefix_len) {
+            pm = ipv6_prefix_match(dst_ip, nif->ipv6_prefix, nif->ipv6_prefix_len);
+        }
+        uart_write("ping6: dst=");
+        uart_write_ipv6_hex(dst_ip);
+        uart_write(" nh=");
+        uart_write_ipv6_hex(nh_ip);
+        uart_write(" prefix_len=");
+        uart_write_hex_u64((uint64_t)nif->ipv6_prefix_len);
+        uart_write(" prefix_match=");
+        uart_write_hex_u64((uint64_t)pm);
+        uart_write(" router_valid=");
+        uart_write_hex_u64((uint64_t)nif->ipv6_router_valid);
+        uart_write("\n");
+    }
+
     uint8_t mac[6];
     if (dst_is_mcast) {
         ipv6_multicast_to_eth(dst_ip, mac);
@@ -1048,6 +1068,17 @@ int net_ipv6_ping6_start(int proc_idx, netif_t *nif, const uint8_t dst_ip[16], u
         return send_echo_request(nif, dst_ip, mac, ident, seq);
     }
 
+    /* For on-link unicast destinations, always perform NDP first.
+     * This ensures the host learns our (global IP -> MAC) mapping from the NS
+     * (SLLA option), so it can send the echo reply without needing multicast
+     * NS delivery to the guest.
+     */
+    if (memeq(nh_ip, dst_ip, 16) && !ipv6_is_linklocal(dst_ip) && !ipv6_is_multicast(dst_ip)) {
+        g_ping_phase = 1;
+        g_ipv6_dbg.ping6_start_sent_ns++;
+        return send_neighbor_solicitation(nif, nh_ip);
+    }
+
     if (nd_lookup_mac(nh_ip, mac) == 0) {
         /* Next hop known: send echo immediately. */
         proc_t *p = &g_procs[proc_idx];
@@ -1055,18 +1086,6 @@ int net_ipv6_ping6_start(int proc_idx, netif_t *nif, const uint8_t dst_ip[16], u
         g_ping_phase = 2;
         g_ipv6_dbg.ping6_start_sent_echo++;
         return send_echo_request(nif, dst_ip, mac, ident, seq);
-    }
-
-    /* Best-effort fallback: use router MAC as L2 next hop for unresolved on-link addresses. */
-    if (nif->ipv6_router_valid && memeq(nh_ip, dst_ip, 16) &&
-        !ipv6_is_linklocal(dst_ip) && !ipv6_is_multicast(dst_ip)) {
-        if (nd_lookup_mac(nif->ipv6_router_ll, mac) == 0) {
-            proc_t *p = &g_procs[proc_idx];
-            p->ping6_start_ns = time_now_ns();
-            g_ping_phase = 2;
-            g_ipv6_dbg.ping6_start_sent_echo++;
-            return send_echo_request(nif, dst_ip, mac, ident, seq);
-        }
     }
 
     /* Neighbor unknown: start NDP. */

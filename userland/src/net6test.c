@@ -262,6 +262,11 @@ int main(int argc, char **argv, char **envp) {
         uint64_t rtt = 0;
         int64_t rc = (int64_t)sys_mona_ping6(host_ip, 0xbeef, 1, 1500, &rtt);
         if (rc != 0) {
+            /* Debug: snapshot /proc/net after ping attempt. */
+            if (read_whole_file("/proc/net", proc_net, sizeof(proc_net), &proc_len) == 0) {
+                dump_proc_net_selected(proc_net, proc_len);
+            }
+
             sys_puts("[net6test] FAIL: ping6 host rc=");
             /* tiny decimal print */
             {

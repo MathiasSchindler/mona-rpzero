@@ -36,6 +36,7 @@ RA_MAX_S="${MONA_RA_MAX_S:-1200}"
 STATE_DIR="/tmp/mona-tap6-${IFNAME}"
 DNSMASQ_PIDFILE="$STATE_DIR/dnsmasq.pid"
 DNSMASQ_DUMPFILE="$STATE_DIR/dnsmasq.pcap"
+DNSMASQ_RESTART_PIDFILE="$STATE_DIR/dnsmasq-restarter.pid"
 TCPDUMP_PIDFILE="$STATE_DIR/tcpdump.pid"
 TCPDUMP_PCAPFILE="$STATE_DIR/tap.pcap"
 
@@ -52,7 +53,14 @@ mkdir -p "$STATE_DIR"
 
 # Assign host IPv6 on the TAP.
 # (Don't fail if it already exists.)
-ip -6 addr add "$HOST_IP/64" dev "$IFNAME" 2>/dev/null || true
+ip -6 addr add "$HOST_IP/64" dev "$IFNAME" nodad 2>/dev/null || true
+
+# Ensure a stable link-local address exists even if the TAP has no carrier yet.
+# Some RA daemons (including dnsmasq) behave poorly if the interface has no
+# usable link-local address at startup.
+if ! ip -6 addr show dev "$IFNAME" scope link 2>/dev/null | grep -q "inet6 fe80:"; then
+  ip -6 addr add "fe80::1/64" dev "$IFNAME" nodad 2>/dev/null || true
+fi
 ip link set "$IFNAME" up
 
 # Become an IPv6 router for the TAP network.
@@ -126,8 +134,46 @@ if [[ -f "$DNSMASQ_PIDFILE" ]]; then
   fi
 fi
 
+# Stop any previous dnsmasq restarter if present.
+if [[ -f "$DNSMASQ_RESTART_PIDFILE" ]]; then
+  oldpid="$(cat "$DNSMASQ_RESTART_PIDFILE" || true)"
+  if [[ -n "$oldpid" ]]; then
+    kill "$oldpid" 2>/dev/null || true
+  fi
+fi
+
 # dnsmasq daemonizes by default.
 dnsmasq --conf-file="$STATE_DIR/dnsmasq.conf" --pid-file="$DNSMASQ_PIDFILE"
+
+# If dnsmasq started before QEMU attaches to the TAP, the interface may appear
+# "down" (no carrier) and some kernels will keep addresses tentative / delay
+# link-local autoconf. In that case, dnsmasq may fail to emit RAs.
+#
+# Workaround: once the interface becomes usable, restart dnsmasq once.
+needs_restart=0
+if ! ip -6 addr show dev "$IFNAME" scope link 2>/dev/null | grep -q "inet6 fe80:"; then
+  needs_restart=1
+fi
+
+if [[ "$needs_restart" == "1" ]]; then
+  (
+    set +e
+    for _ in $(seq 1 100); do
+      if ip -6 addr show dev "$IFNAME" scope link 2>/dev/null | grep -q "inet6 fe80:"; then
+        pid="$(cat "$DNSMASQ_PIDFILE" 2>/dev/null || true)"
+        if [[ -n "$pid" ]]; then
+          kill "$pid" 2>/dev/null || true
+        fi
+        rm -f "$DNSMASQ_PIDFILE" 2>/dev/null || true
+        dnsmasq --conf-file="$STATE_DIR/dnsmasq.conf" --pid-file="$DNSMASQ_PIDFILE" 2>/dev/null || true
+        exit 0
+      fi
+      sleep 0.05
+    done
+    exit 0
+  ) &
+  echo $! >"$DNSMASQ_RESTART_PIDFILE"
+fi
 
 WAN_IF="${MONA_WAN_IF:-}"
 if [[ "$ENABLE_NAT66" == "1" ]]; then

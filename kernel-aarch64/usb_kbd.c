@@ -110,10 +110,22 @@ void usb_kbd_poll(void) {
     uint8_t report[8];
     uint32_t got = 0;
 
-    if (usb_host_in_xfer(g.addr, g.low_speed, g.intr_in, g.intr_in_pid,
-                         report, sizeof(report), &got, /*nak_ok=*/1) != 0) {
+    int xrc = usb_host_in_xfer(g.addr, g.low_speed, g.intr_in, g.intr_in_pid,
+                               report, sizeof(report), &got, /*nak_ok=*/1);
+    if (xrc != 0 && xrc != USB_XFER_NODATA) {
         return;
     }
+
+    if (xrc == USB_XFER_NODATA) {
+        return;
+    }
+
+    /* got==0 with xrc==0 is a valid ZLP completion; advance PID and return. */
+    if (got == 0) {
+        g.intr_in_pid = (g.intr_in_pid == USB_PID_DATA0) ? USB_PID_DATA1 : USB_PID_DATA0;
+        return;
+    }
+
     if (got < 8) return;
 
     g.intr_in_pid = (g.intr_in_pid == USB_PID_DATA0) ? USB_PID_DATA1 : USB_PID_DATA0;

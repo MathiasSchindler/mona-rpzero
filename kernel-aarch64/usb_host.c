@@ -364,12 +364,13 @@ static int dwc2_in_xfer(uint32_t ch, uint8_t dev_addr, uint8_t ep, uint8_t ep_ty
     if (rc < 0) {
         hc_halt(ch);
         if (out_got) *out_got = 0;
-        return nak_ok ? 0 : -1;
+        /* Polling mode: timeout/NAK means "no data yet", not a hard error. */
+        return nak_ok ? 1 : -1;
     }
     if (rc & HCINT_NAK) {
         hc_halt(ch);
         if (out_got) *out_got = 0;
-        return nak_ok ? 0 : -1;
+        return nak_ok ? 1 : -1;
     }
     if (rc & (HCINT_STALL | HCINT_XACTERR | HCINT_BBLERR | HCINT_FRMOVRUN | HCINT_DATATGLERR)) {
         hc_halt(ch);

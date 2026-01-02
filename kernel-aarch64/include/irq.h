@@ -12,13 +12,15 @@
  */
 
 static inline void irq_enable(void) {
-    /* Clear PSTATE.I (IRQ mask). */
-    __asm__ volatile("msr daifclr, #2" ::: "memory");
+    /* Clear PSTATE.I (IRQ mask) and PSTATE.F (FIQ mask).
+     * Some platforms route the physical timer interrupt as FIQ.
+     */
+    __asm__ volatile("msr daifclr, #3" ::: "memory");
 }
 
 static inline void irq_disable(void) {
-    /* Set PSTATE.I (IRQ mask). */
-    __asm__ volatile("msr daifset, #2" ::: "memory");
+    /* Set PSTATE.I (IRQ mask) and PSTATE.F (FIQ mask). */
+    __asm__ volatile("msr daifset, #3" ::: "memory");
 }
 
 static inline void cpu_wfi(void) {

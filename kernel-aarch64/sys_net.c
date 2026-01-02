@@ -8,6 +8,7 @@
 #include "proc.h"
 #include "sched.h"
 #include "sys_util.h"
+#include "usb.h"
 #include "time.h"
 
 /* mona-specific: synchronous ICMPv6 echo (ping6).
@@ -303,11 +304,9 @@ uint64_t sys_mona_ping6(trap_frame_t *tf,
     cur->ping6_rtt_user = rtt_ns_user;
     cur->ping6_ret = 0;
 
-    {
-        uint64_t deadline = now + timeout_ns;
-        if (deadline < now) deadline = 0xFFFFFFFFFFFFFFFFull;
-        cur->sleep_deadline_ns = deadline;
-    }
+    uint64_t deadline = now + timeout_ns;
+    if (deadline < now) deadline = 0xFFFFFFFFFFFFFFFFull;
+    cur->sleep_deadline_ns = deadline;
     cur->state = PROC_SLEEPING;
 
     int rc = net_ipv6_ping6_start(g_cur_proc, nif, dst_ip, (uint16_t)ident, (uint16_t)seq);
@@ -321,49 +320,40 @@ uint64_t sys_mona_ping6(trap_frame_t *tf,
         }
     }
 
-retry_wait:
-    if (cur->pending_ping6 && !cur->ping6_done && cur->ping6_start_ns == 0) {
-        /* Not started yet (e.g., waiting for SLAAC). Retry kick. */
-        int trc = net_ipv6_ping6_start(g_cur_proc, nif, dst_ip, (uint16_t)ident, (uint16_t)seq);
-        if (trc < 0 && trc != -(int)EAGAIN && trc != -(int)EBUSY) {
-            cur->ping6_done = 1;
-            cur->ping6_ret = (uint64_t)(int64_t)trc;
-            net_ipv6_ping6_cancel(g_cur_proc);
-        }
-    }
-
-    int next = sched_pick_next_runnable();
-    if (next >= 0 && next != g_cur_proc) {
-        proc_switch_to(next, tf);
-        return SYSCALL_SWITCHED;
-    }
-
-    /* No other runnable tasks: sched_pick_next_runnable may have idled until
-     * a packet or the deadline made us runnable again.
+    /* Busy-wait polling path:
+     * Userland runs with IRQs masked, so timer-driven USB polling may not run.
+     * For early bring-up and tests, explicitly poll USB here until completion
+     * or timeout.
      */
-    if (cur->state == PROC_SLEEPING) {
-        cur->state = PROC_RUNNABLE;
-    }
+    for (;;) {
+        if (!cur->pending_ping6) {
+            return cur->tf.x[0];
+        }
 
-    if (!cur->pending_ping6) {
-        /* Completed via scheduler completion hook.
-         * In the "no other runnable" case, we didn't actually switch, so the
-         * completion hook didn't run; complete inline.
-         */
-        return cur->tf.x[0];
-    }
+        if (!cur->ping6_done && cur->ping6_start_ns == 0) {
+            int trc = net_ipv6_ping6_start(g_cur_proc, nif, dst_ip, (uint16_t)ident, (uint16_t)seq);
+            if (trc < 0 && trc != -(int)EAGAIN && trc != -(int)EBUSY) {
+                cur->ping6_done = 1;
+                cur->ping6_ret = (uint64_t)(int64_t)trc;
+                net_ipv6_ping6_cancel(g_cur_proc);
+            }
+        }
 
-    /* Inline completion path (no context switch happened): check done/timeout. */
-    if (!cur->ping6_done) {
+#if defined(ENABLE_USB_KBD) || defined(ENABLE_USB_NET)
+        usb_poll();
+#endif
+
+        if (cur->ping6_done) {
+            break;
+        }
+
         uint64_t tnow = time_now_ns();
-        if (cur->sleep_deadline_ns != 0 && tnow >= cur->sleep_deadline_ns) {
+        if (cur->sleep_deadline_ns != 0 && tnow != 0 && tnow >= cur->sleep_deadline_ns) {
             cur->ping6_done = 1;
             cur->ping6_ret = (uint64_t)(-(int64_t)ETIMEDOUT);
             cur->ping6_rtt_ns = 0;
             net_ipv6_ping6_cancel(g_cur_proc);
-        } else {
-            /* Still pending: keep waiting. */
-            goto retry_wait;
+            break;
         }
     }
 

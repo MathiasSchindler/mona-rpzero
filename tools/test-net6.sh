@@ -43,7 +43,29 @@ fi
 
 mkdir -p "$STATE_DIR"
 
+qpid=""
+
+kill_pid() {
+  local pid="$1"
+  if [[ -z "$pid" ]]; then
+    return 0
+  fi
+  if ! kill -0 "$pid" 2>/dev/null; then
+    return 0
+  fi
+  kill -TERM "$pid" >/dev/null 2>&1 || true
+  local i
+  for i in $(seq 1 40); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      return 0
+    fi
+    sleep 0.05
+  done
+  kill -KILL "$pid" >/dev/null 2>&1 || true
+}
+
 cleanup() {
+  kill_pid "$qpid"
   # tap6-down may remove $STATE_DIR; preserve the QEMU UART log for debugging.
   if [[ -f "$LOGFILE" ]]; then
     cp -f "$LOGFILE" "${ARCHIVE_STEM}.log" >/dev/null 2>&1 || true
@@ -78,26 +100,45 @@ QEMU_CMD=(bash tools/run-qemu-raspi3b.sh \
   --serial "file:$LOGFILE" \
   --monitor none)
 
+: >"$LOGFILE"
+
 set +e
-if command -v timeout >/dev/null 2>&1; then
-  timeout -k 1s "$remaining" "${QEMU_CMD[@]}"
-  qrc=$?
-else
-  "${QEMU_CMD[@]}"
-  qrc=$?
-fi
+"${QEMU_CMD[@]}" &
+qpid=$!
 set -e
 
-if [[ $qrc -eq 124 ]]; then
-  echo "[test-net6] TIMEOUT: QEMU exceeded ${TEST_TIMEOUT_S}s" >&2
-fi
+deadline=$((SECONDS + remaining))
+passed=0
 
-echo "[test-net6] QEMU exit code: $qrc"
+while (( SECONDS < deadline )); do
+  if grep -q "\[net6test\] PASS" "$LOGFILE" 2>/dev/null; then
+    passed=1
+    break
+  fi
+  if ! kill -0 "$qpid" 2>/dev/null; then
+    break
+  fi
+  sleep 0.05
+done
 
-if grep -q "\[net6test\] PASS" "$LOGFILE"; then
+if [[ "$passed" == "1" ]]; then
+  kill_pid "$qpid"
+  wait "$qpid" >/dev/null 2>&1 || true
   echo "[test-net6] PASS"
   exit 0
 fi
+
+if kill -0 "$qpid" 2>/dev/null; then
+  echo "[test-net6] TIMEOUT: QEMU exceeded ${TEST_TIMEOUT_S}s" >&2
+  kill_pid "$qpid"
+fi
+
+set +e
+wait "$qpid"
+qrc=$?
+set -e
+
+echo "[test-net6] QEMU exit code: $qrc"
 
 echo "[test-net6] FAIL: guest did not report PASS" >&2
 echo "[test-net6] extracting guest net6test output:" >&2

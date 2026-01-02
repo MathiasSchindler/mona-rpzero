@@ -791,14 +791,21 @@ void usb_net_poll(void) {
              */
             for (int chunk = 0; chunk < 32; chunk++) {
                 got = 0;
-                if (usb_host_in_xfer(g_usbnet.addr, g_usbnet.low_speed, g_usbnet.ep_in, g_usbnet.in_pid,
-                                     buf, req, &got, /*nak_ok=*/1) != 0) {
+                int xrc = usb_host_in_xfer(g_usbnet.addr, g_usbnet.low_speed, g_usbnet.ep_in, g_usbnet.in_pid,
+                                           buf, req, &got, /*nak_ok=*/1);
+                if (xrc != 0 && xrc != USB_XFER_NODATA) {
                     g_usbnet.rx_errors++;
                     return;
                 }
 
-                if (got == 0) {
+                if (xrc == USB_XFER_NODATA) {
                     g_usbnet.rx_naks++;
+                    break;
+                }
+
+                /* got==0 with xrc==0 is a valid ZLP completion; advance PID. */
+                if (got == 0) {
+                    g_usbnet.in_pid = (g_usbnet.in_pid == USB_PID_DATA0) ? USB_PID_DATA1 : USB_PID_DATA0;
                     break;
                 }
 
@@ -827,35 +834,49 @@ void usb_net_poll(void) {
              */
 
             uint32_t off = 0;
-            while (off + sizeof(rndis_packet_msg_t) <= g_usbnet.rndis_accum_len) {
+            while (off + sizeof(rndis_hdr_t) <= g_usbnet.rndis_accum_len) {
                 uint8_t *base = g_usbnet.rndis_accum + off;
-                rndis_packet_msg_t *p = (rndis_packet_msg_t *)base;
+                rndis_hdr_t *h = (rndis_hdr_t *)base;
 
-                uint32_t msg_len = p->msg_len;
-                if (msg_len < sizeof(rndis_packet_msg_t)) {
+                uint32_t msg_type = h->msg_type;
+                uint32_t msg_len = h->msg_len;
+                uint32_t remain = g_usbnet.rndis_accum_len - off;
+
+                /* Robustness: if we ever get desynced (e.g. partial message +
+                 * next transfer boundaries), avoid nuking the whole accumulator.
+                 * Instead, advance by one byte and rescan for a plausible header.
+                 */
+                if (msg_len < (uint32_t)sizeof(rndis_hdr_t)) {
                     g_usbnet.rx_rndis_drop_small++;
-                    /* Corrupt/unsync; drop accumulator to resync. */
-                    g_usbnet.rndis_accum_len = 0;
-                    return;
+                    off += 1;
+                    continue;
                 }
                 if (msg_len > (uint32_t)sizeof(g_usbnet.rndis_accum)) {
                     g_usbnet.rx_rndis_drop_bounds++;
-                    g_usbnet.rndis_accum_len = 0;
-                    return;
+                    off += 1;
+                    continue;
                 }
 
                 /* Wait for more data if this message is incomplete. */
-                if ((uint64_t)off + msg_len > g_usbnet.rndis_accum_len) {
+                if (msg_len > remain) {
                     break;
                 }
 
-                g_usbnet.last_msg_type = p->msg_type;
-                if (p->msg_type != 0x00000001u) {
-                    /* Not a data packet: skip. */
+                g_usbnet.last_msg_type = msg_type;
+                if (msg_type != 0x00000001u) {
+                    /* Not a data packet: skip it. */
                     g_usbnet.rx_rndis_drop_type++;
                     off += msg_len;
                     continue;
                 }
+
+                if (msg_len < (uint32_t)sizeof(rndis_packet_msg_t)) {
+                    g_usbnet.rx_rndis_drop_small++;
+                    off += 1;
+                    continue;
+                }
+
+                rndis_packet_msg_t *p = (rndis_packet_msg_t *)base;
 
                 uint32_t data_len = p->data_len;
                 uint32_t data_off = p->data_offset;
@@ -904,14 +925,21 @@ void usb_net_poll(void) {
             }
         } else {
             /* Non-RNDIS: single-chunk best-effort. */
-            if (usb_host_in_xfer(g_usbnet.addr, g_usbnet.low_speed, g_usbnet.ep_in, g_usbnet.in_pid,
-                                 buf, req, &got, /*nak_ok=*/1) != 0) {
+            int xrc = usb_host_in_xfer(g_usbnet.addr, g_usbnet.low_speed, g_usbnet.ep_in, g_usbnet.in_pid,
+                                       buf, req, &got, /*nak_ok=*/1);
+            if (xrc != 0 && xrc != USB_XFER_NODATA) {
                 g_usbnet.rx_errors++;
                 return;
             }
 
-            if (got == 0) {
+            if (xrc == USB_XFER_NODATA) {
                 g_usbnet.rx_naks++;
+                return;
+            }
+
+            if (got == 0) {
+                /* Valid ZLP completion; advance PID and return. */
+                g_usbnet.in_pid = (g_usbnet.in_pid == USB_PID_DATA0) ? USB_PID_DATA1 : USB_PID_DATA0;
                 return;
             }
 
