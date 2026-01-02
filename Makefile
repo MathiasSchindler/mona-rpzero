@@ -9,7 +9,7 @@
 # `make run` can be customized via variables:
 #   GFX=0|1            (default: 1)
 #   USB_KBD=0|1        (default: 1)
-#   USB_NET=0|1        (default: 0)  # when USB_KBD=1 we default this off for deterministic enum
+#   USB_NET=0|1        (default: 1)
 #   USB_NET_BACKEND=user|tap (default: user)
 #   TAP_IF=name         (default: mona0)  # only used when USB_NET_BACKEND=tap
 #   SERIAL=stdio|vc|null  (default: stdio)
@@ -62,7 +62,7 @@ USERPROG ?= init
 # --- `make run` defaults (interactive) ---
 GFX ?= 1
 USB_KBD ?= 1
-USB_NET ?= 0
+USB_NET ?= 1
 USB_NET_BACKEND ?= user
 TAP_IF ?= mona0
 SERIAL ?= stdio
@@ -78,12 +78,18 @@ all: aarch64-kernel
 # --- Bare-metal AArch64 kernel (Phase 0) ---
 
 AARCH64_DIR ?= kernel-aarch64
-# Homebrew on macOS typically provides the bare-metal toolchain as `aarch64-elf-*`.
-# You can override this (e.g. `make AARCH64_CROSS=aarch64-linux-gnu- ...`).
-ifeq ($(UNAME_S),Darwin)
-AARCH64_CROSS ?= aarch64-elf-
-else
-AARCH64_CROSS ?= aarch64-linux-gnu-
+# Cross toolchain prefix autodetection.
+# - macOS (Homebrew) commonly provides `aarch64-elf-*`.
+# - Linux distros often provide `aarch64-linux-gnu-*`.
+# You can always override with `make AARCH64_CROSS=...`.
+ifeq ($(origin AARCH64_CROSS),undefined)
+	ifneq ($(shell command -v aarch64-linux-gnu-gcc 2>/dev/null),)
+		AARCH64_CROSS := aarch64-linux-gnu-
+	else ifneq ($(shell command -v aarch64-elf-gcc 2>/dev/null),)
+		AARCH64_CROSS := aarch64-elf-
+	else
+		$(error No AArch64 cross-compiler found. Install aarch64-linux-gnu-gcc or aarch64-elf-gcc, or set AARCH64_CROSS=...)
+	endif
 endif
 AARCH64_IMG := $(AARCH64_DIR)/build/kernel8.img
 

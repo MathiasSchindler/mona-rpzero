@@ -585,6 +585,32 @@ static int usb_hub_set_port_feature(uint8_t hub_addr, uint8_t port, uint16_t fea
     return usb_control(req, 0, 0, 0);
 }
 
+static int usb_hub_get_descriptor(uint8_t hub_addr, uint8_t *out, uint32_t out_len, uint32_t *out_got) {
+    if (!out || out_len == 0) return -1;
+    g.dev_addr = hub_addr;
+    usb_setup_t req = {
+        .bmRequestType = 0xA0u, /* D2H | Class | Device */
+        .bRequest = REQ_GET_DESCRIPTOR,
+        .wValue = (uint16_t)((DESC_HUB << 8) | 0),
+        .wIndex = 0,
+        .wLength = (uint16_t)out_len,
+    };
+    uint32_t got = 0;
+    if (usb_control(req, out, out_len, &got) != 0) return -1;
+    if (out_got) *out_got = got;
+    return 0;
+}
+
+static int usb_hub_get_num_ports(uint8_t hub_addr, uint8_t *out_ports) {
+    uint8_t d[8];
+    uint32_t got = 0;
+    if (usb_hub_get_descriptor(hub_addr, d, sizeof(d), &got) != 0 || got < 3) return -1;
+    uint8_t n = d[2];
+    if (n == 0 || n > 15) return -1;
+    *out_ports = n;
+    return 0;
+}
+
 static int usb_hub_power_and_reset_port(uint8_t hub_addr, uint8_t port, int *out_low_speed) {
     if (usb_hub_set_port_feature(hub_addr, port, HUB_PORT_POWER) != 0) return -1;
     udelay_ns(200000000ull);
@@ -783,23 +809,41 @@ static int usb_enumerate_keyboard(void) {
 #endif
 
     if (bDeviceClass == 9u) {
-        /* Enumerate/configure the hub at address 1, then enumerate the downstream keyboard at address 2. */
+        /* Enumerate/configure the hub at address 1, then scan ports to find a HID keyboard.
+         * With multiple QEMU USB devices (e.g. usb-net + usb-kbd), the keyboard is not
+         * guaranteed to be on port 1.
+         */
         const uint8_t hub_addr = 1;
-        const uint8_t kbd_addr = 2;
-
         if (usb_enumerate_hub_at_addr(hub_addr) != 0) return -1;
 
-        int kbd_ls = 0;
-        if (usb_hub_power_and_reset_port(hub_addr, 1, &kbd_ls) != 0) return -1;
+        uint8_t nports = 0;
+        if (usb_hub_get_num_ports(hub_addr, &nports) != 0) {
+            /* Best-effort fallback for QEMU: try a small number of ports. */
+            nports = 8;
+        }
 
-        g.low_speed = kbd_ls;
-    #if USB_KBD_DEBUG
-        uart_write("usb-kbd: downstream speed=");
-        uart_write(g.low_speed ? "LS\n" : "FS/HS\n");
-    #endif
+        uint8_t next_addr = 2;
+        for (uint8_t port = 1; port <= nports && next_addr < 0x7Fu; port++) {
+            uint16_t ps = 0, pc = 0;
+            if (usb_hub_get_port_status(hub_addr, port, &ps, &pc) != 0) continue;
+            if ((ps & PORT_STATUS_CONNECTION) == 0) continue;
 
-        /* Downstream device now in default state at address 0. */
-        return usb_enumerate_hid_keyboard_at_addr(kbd_addr);
+            int dev_ls = 0;
+            if (usb_hub_power_and_reset_port(hub_addr, port, &dev_ls) != 0) continue;
+            g.low_speed = dev_ls;
+
+        #if USB_KBD_DEBUG
+            uart_write("usb-kbd: probe port=");
+            uart_write_hex_u64(port);
+            uart_write(" speed=");
+            uart_write(g.low_speed ? "LS\n" : "FS/HS\n");
+        #endif
+
+            /* Downstream device now in default state at address 0. */
+            if (usb_enumerate_hid_keyboard_at_addr(next_addr) == 0) return 0;
+            next_addr++;
+        }
+        return -1;
     }
 
     /* No hub: enumerate the device directly as a HID boot keyboard (address 1). */

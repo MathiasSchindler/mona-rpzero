@@ -152,6 +152,10 @@ if [[ -n "$APPEND" ]]; then
   cmd+=( -append "$APPEND" )
 fi
 
+if [[ "$USB_KBD" -eq 1 ]]; then
+  cmd+=( -device usb-kbd )
+fi
+
 if [[ "$USB_NET" -eq 1 ]]; then
   case "$USB_NET_BACKEND" in
     user)
@@ -171,10 +175,6 @@ if [[ "$USB_NET" -eq 1 ]]; then
       exit 2
       ;;
   esac
-fi
-
-if [[ "$USB_KBD" -eq 1 ]]; then
-  cmd+=( -device usb-kbd )
 fi
 
 exec "${cmd[@]}"
