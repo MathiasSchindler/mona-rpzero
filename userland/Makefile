@@ -48,7 +48,7 @@ USER_BASE ?= 0x0000000000400000
 
 .PHONY: all clean check-toolchain check-nolibc initramfs
 
-all: check-nolibc $(BUILD)/echo.bin $(BUILD)/true.bin $(BUILD)/false.bin $(BUILD)/cat.bin $(BUILD)/ls.bin $(BUILD)/pwd.bin $(BUILD)/pid.bin $(BUILD)/uname.bin $(BUILD)/mkdir.bin $(BUILD)/touch.bin $(BUILD)/rm.bin $(BUILD)/rmdir.bin $(BUILD)/seq.bin $(BUILD)/uniq.bin $(BUILD)/wc.bin $(BUILD)/grep.bin $(BUILD)/ps.bin $(BUILD)/kill.bin $(BUILD)/pstree.bin $(BUILD)/find.bin $(BUILD)/awk.bin $(BUILD)/basename.bin $(BUILD)/du.bin $(BUILD)/ln.bin $(BUILD)/tr.bin $(BUILD)/sed.bin $(BUILD)/cut.bin $(BUILD)/od.bin $(BUILD)/head.bin $(BUILD)/tail.bin $(BUILD)/sort.bin $(BUILD)/printf.bin $(BUILD)/tee.bin $(BUILD)/rev.bin $(BUILD)/env.bin $(BUILD)/dirname.bin $(BUILD)/time.bin $(BUILD)/dmesg.bin $(BUILD)/readelf.bin $(BUILD)/readlink.bin $(BUILD)/brk.bin $(BUILD)/mmap.bin $(BUILD)/cwd.bin $(BUILD)/tty.bin $(BUILD)/sleep.bin $(BUILD)/date.bin $(BUILD)/uptime.bin $(BUILD)/compat.bin $(BUILD)/kinit.bin $(BUILD)/sh.bin $(BUILD)/init.bin $(BUILD)/yes.bin $(BUILD)/diff.bin $(BUILD)/cp.bin $(BUILD)/mv.bin $(BUILD)/stat.bin $(BUILD)/which.bin $(BUILD)/chmod.bin $(BUILD)/clear.bin $(BUILD)/free.bin $(BUILD)/id.bin $(BUILD)/whoami.bin
+all: check-nolibc $(BUILD)/echo.bin $(BUILD)/true.bin $(BUILD)/false.bin $(BUILD)/cat.bin $(BUILD)/ls.bin $(BUILD)/pwd.bin $(BUILD)/pid.bin $(BUILD)/uname.bin $(BUILD)/mkdir.bin $(BUILD)/touch.bin $(BUILD)/rm.bin $(BUILD)/rmdir.bin $(BUILD)/seq.bin $(BUILD)/uniq.bin $(BUILD)/wc.bin $(BUILD)/grep.bin $(BUILD)/ps.bin $(BUILD)/kill.bin $(BUILD)/pstree.bin $(BUILD)/find.bin $(BUILD)/awk.bin $(BUILD)/basename.bin $(BUILD)/du.bin $(BUILD)/ln.bin $(BUILD)/tr.bin $(BUILD)/sed.bin $(BUILD)/cut.bin $(BUILD)/od.bin $(BUILD)/head.bin $(BUILD)/tail.bin $(BUILD)/sort.bin $(BUILD)/printf.bin $(BUILD)/tee.bin $(BUILD)/rev.bin $(BUILD)/env.bin $(BUILD)/dirname.bin $(BUILD)/time.bin $(BUILD)/dmesg.bin $(BUILD)/readelf.bin $(BUILD)/readlink.bin $(BUILD)/brk.bin $(BUILD)/mmap.bin $(BUILD)/cwd.bin $(BUILD)/tty.bin $(BUILD)/sleep.bin $(BUILD)/date.bin $(BUILD)/uptime.bin $(BUILD)/compat.bin $(BUILD)/kinit.bin $(BUILD)/sh.bin $(BUILD)/init.bin $(BUILD)/yes.bin $(BUILD)/diff.bin $(BUILD)/cp.bin $(BUILD)/mv.bin $(BUILD)/stat.bin $(BUILD)/which.bin $(BUILD)/chmod.bin $(BUILD)/clear.bin $(BUILD)/free.bin $(BUILD)/id.bin $(BUILD)/whoami.bin $(BUILD)/who.bin
 
 initramfs: $(BUILD)/initramfs.cpio
 
@@ -208,6 +208,9 @@ $(BUILD)/id.o: src/id.c include/syscall.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/whoami.o: src/whoami.c include/syscall.h | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/who.o: src/who.c include/syscall.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/clear.o: src/clear.c include/syscall.h | $(BUILD)
@@ -438,6 +441,10 @@ $(BUILD)/whoami.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $
 	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
 	$(POSTLINK)
 
+$(BUILD)/who.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/who.o | check-toolchain
+	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
+	$(POSTLINK)
+
 $(BUILD)/clear.elf: $(BUILD)/crt0.o $(BUILD)/syscall_asm.o $(BUILD)/syscall.o $(BUILD)/clear.o | check-toolchain
 	$(LD) $(LDFLAGS) -e _start -T link.ld -defsym=__user_base=$(USER_BASE) -o $@ $^
 	$(POSTLINK)
@@ -644,6 +651,9 @@ $(BUILD)/id.bin: $(BUILD)/id.elf | check-toolchain
 $(BUILD)/whoami.bin: $(BUILD)/whoami.elf | check-toolchain
 	$(OBJCOPY) -O binary $< $@
 
+$(BUILD)/who.bin: $(BUILD)/who.elf | check-toolchain
+	$(OBJCOPY) -O binary $< $@
+
 $(BUILD)/clear.bin: $(BUILD)/clear.elf | check-toolchain
 	$(OBJCOPY) -O binary $< $@
 
@@ -752,6 +762,7 @@ $(BUILD)/initramfs.cpio: $(TOOLS_DIR)/mkcpio_newc.py all | $(BUILD)
 	@cp "$(BUILD)/free.elf" "$(INITRAMFS_ROOT)/bin/free"
 	@cp "$(BUILD)/id.elf" "$(INITRAMFS_ROOT)/bin/id"
 	@cp "$(BUILD)/whoami.elf" "$(INITRAMFS_ROOT)/bin/whoami"
+	@cp "$(BUILD)/who.elf" "$(INITRAMFS_ROOT)/bin/who"
 	@cp "$(BUILD)/clear.elf" "$(INITRAMFS_ROOT)/bin/clear"
 	@cp "$(BUILD)/time.elf"  "$(INITRAMFS_ROOT)/bin/time"
 	@cp "$(BUILD)/dmesg.elf"  "$(INITRAMFS_ROOT)/bin/dmesg"

@@ -1090,6 +1090,13 @@ uint64_t sys_getdents64(uint64_t fd, uint64_t dirp_user, uint64_t count) {
     dc.buf_len = count;
     dc.pos = 0;
 
+    /* Make procfs discoverable under the root directory.
+     * The actual /proc handling is implemented via path special-cases in sys_openat/newfstatat.
+     */
+    if (d->u.initramfs.dir_path[0] == '\0') {
+        (void)dents_emit_cb("proc", S_IFDIR, &dc);
+    }
+
     int rc = vfs_list_dir(d->u.initramfs.dir_path, dents_emit_cb, &dc);
     if (rc != 0) {
         return (uint64_t)(-(int64_t)ENOENT);

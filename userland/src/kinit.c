@@ -724,6 +724,21 @@ int main(int argc, char **argv, char **envp) {
         }
     }
 
+    /* Tool smoke test: /proc is discoverable from / (root getdents64 injects it). */
+    {
+        char out[512];
+        const char *const find_argv[] = {"find", "/", "-maxdepth", "1", "-name", "proc", 0};
+        if (run_capture("/bin/find", find_argv, out, sizeof(out)) != 0) {
+            sys_puts("[kinit] find(/) capture failed\n");
+            failed |= 1;
+        } else {
+            if (!mem_contains(out, cstr_len_u64_local(out), "/proc")) {
+                sys_puts("[kinit] find(/) missing /proc (root listing should include it)\n");
+                failed |= 1;
+            }
+        }
+    }
+
     {
         const char *const test_argv[] = {"sh", "-c", "cd /home; pwd", 0};
         failed |= run_test("/bin/sh -c \"cd /home; pwd\"", "/bin/sh", test_argv);
@@ -882,6 +897,47 @@ int main(int argc, char **argv, char **envp) {
             if (!mem_contains(out, cstr_len_u64_local(out), "Mem:")) {
                 sys_puts("[kinit] free output unexpected\n");
                 failed |= 1;
+            }
+        }
+
+        const char *const who_argv[] = {"who", 0};
+        if (run_capture("/bin/who", who_argv, out, sizeof(out)) != 0) {
+            sys_puts("[kinit] who capture failed\n");
+            failed |= 1;
+        } else {
+            if (!mem_contains(out, cstr_len_u64_local(out), "root")) {
+                sys_puts("[kinit] who output unexpected\n");
+                failed |= 1;
+            }
+        }
+    }
+
+    /* Kernel interface smoke test: /proc/meminfo exists and has expected fields. */
+    {
+        enum {
+            AT_FDCWD = -100,
+            O_RDONLY = 0,
+        };
+
+        uint64_t fd = sys_openat((uint64_t)AT_FDCWD, "/proc/meminfo", (uint64_t)O_RDONLY, 0);
+        if ((int64_t)fd < 0) {
+            sys_puts("[kinit] open /proc/meminfo failed\n");
+            failed |= 1;
+        } else {
+            char buf[256];
+            long n = (long)sys_read(fd, buf, sizeof(buf) - 1);
+            (void)sys_close(fd);
+            if (n < 0) {
+                sys_puts("[kinit] read /proc/meminfo failed\n");
+                failed |= 1;
+            } else {
+                buf[n] = '\0';
+                if (!mem_contains(buf, (uint64_t)n, "MemTotal:") ||
+                    !mem_contains(buf, (uint64_t)n, "MemFree:") ||
+                    !mem_contains(buf, (uint64_t)n, "kB")) {
+                    sys_puts("[kinit] /proc/meminfo output unexpected\n");
+                    failed |= 1;
+                }
             }
         }
     }

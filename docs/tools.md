@@ -76,7 +76,7 @@ This is intentionally coarse; it’s a progress indicator, not a spec.
 | column | Planned | 0 |
 | gzip | Planned | 0 |
 | sort | Partial | 4 |
-| who | Planned | 0 |
+| who | Partial | 1 |
 | cp | Partial | 4 |
 | head | Partial | 4 |
 | stat | Partial | 2 |
