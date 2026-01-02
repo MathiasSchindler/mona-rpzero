@@ -80,6 +80,17 @@ int usb_host_out_xfer(uint8_t dev_addr, int low_speed, usb_ep_t ep, uint32_t pid
 int usb_host_in_xfer(uint8_t dev_addr, int low_speed, usb_ep_t ep, uint32_t pid,
                      uint8_t *out, uint32_t len, uint32_t *out_got, int nak_ok);
 
+/* Fetch a USB string descriptor and decode as ASCII (best-effort).
+ * Returns 0 on success and null-terminates `out`.
+ */
+int usb_host_get_string_ascii(uint8_t dev_addr, int low_speed, uint8_t str_index,
+                              char *out, size_t out_len);
+
+/* Standard request: SET_INTERFACE (alternate setting) for a specific interface.
+ * Returns 0 on success.
+ */
+int usb_host_set_interface(uint8_t dev_addr, int low_speed, uint8_t if_num, uint8_t alt_setting);
+
 /* Descriptor parsing helpers over `usb_device_t.cfg`. */
 int usb_host_find_hid_kbd_intr_in(const usb_device_t *dev, usb_ep_t *out_intr_in);
 

@@ -331,11 +331,13 @@ static int dwc2_in_xfer(uint32_t ch, uint8_t dev_addr, uint8_t ep, uint8_t ep_ty
 #define REQ_GET_DESCRIPTOR 6u
 #define REQ_SET_ADDRESS 5u
 #define REQ_SET_CONFIGURATION 9u
+#define REQ_SET_INTERFACE 11u
 #define REQ_GET_STATUS 0u
 #define REQ_SET_FEATURE 3u
 
 #define DESC_DEVICE 1u
 #define DESC_CONFIG 2u
+#define DESC_STRING 3u
 #define DESC_HUB 0x29u
 
 #define HUB_PORT_RESET 4u
@@ -398,6 +400,71 @@ int usb_host_in_xfer(uint8_t dev_addr, int low_speed, usb_ep_t ep, uint32_t pid,
                      uint8_t *out, uint32_t len, uint32_t *out_got, int nak_ok) {
     const uint32_t ch = 1;
     return dwc2_in_xfer(ch, dev_addr, ep.ep_num, ep.ep_type, ep.mps, low_speed, pid, out, len, out_got, nak_ok);
+}
+
+int usb_host_set_interface(uint8_t dev_addr, int low_speed, uint8_t if_num, uint8_t alt_setting) {
+    usb_setup_t req = {
+        .bmRequestType = 0x01u, /* H2D | Standard | Interface */
+        .bRequest = REQ_SET_INTERFACE,
+        .wValue = alt_setting,
+        .wIndex = if_num,
+        .wLength = 0,
+    };
+    return usb_host_control_xfer(dev_addr, low_speed, req, 0, 0, 0);
+}
+
+static int is_printable_ascii(char c) {
+    return (c >= 0x20 && c <= 0x7eu);
+}
+
+int usb_host_get_string_ascii(uint8_t dev_addr, int low_speed, uint8_t str_index,
+                              char *out, size_t out_len) {
+    if (!out || out_len == 0) return -1;
+    out[0] = 0;
+    if (str_index == 0) return -1;
+
+    uint8_t buf[64];
+    uint32_t got = 0;
+
+    /* Try common English (US) language ID; QEMU typically accepts this.
+     * If that fails, retry with wIndex=0.
+     */
+    uint16_t lang = 0x0409u;
+    for (int attempt = 0; attempt < 2; attempt++) {
+        usb_setup_t req = {
+            .bmRequestType = 0x80u,
+            .bRequest = REQ_GET_DESCRIPTOR,
+            .wValue = (uint16_t)((DESC_STRING << 8) | str_index),
+            .wIndex = lang,
+            .wLength = (uint16_t)sizeof(buf),
+        };
+
+        got = 0;
+        if (usb_host_control_xfer(dev_addr, low_speed, req, buf, sizeof(buf), &got) == 0 && got >= 2) {
+            break;
+        }
+        lang = 0;
+    }
+
+    if (got < 2 || buf[1] != DESC_STRING) return -1;
+
+    uint8_t bLength = buf[0];
+    if (bLength > got) bLength = (uint8_t)got;
+    if (bLength < 2) return -1;
+
+    size_t w = 0;
+    for (uint32_t i = 2; i + 1 < bLength && w + 1 < out_len; i += 2) {
+        char c = (char)buf[i];
+        if (!is_printable_ascii(c)) {
+            /* Keep going; some strings include separators.
+             * We only emit printable ASCII.
+             */
+            continue;
+        }
+        out[w++] = c;
+    }
+    out[w] = 0;
+    return (w > 0) ? 0 : -1;
 }
 
 static int usb_hub_get_port_status(uint8_t hub_addr, uint8_t port, uint16_t *out_status, uint16_t *out_change) {

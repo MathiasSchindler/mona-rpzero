@@ -120,6 +120,9 @@ run: userland
 		kdefs+=" -DENABLE_USB_KBD"; \
 		if [[ "$(USB_KBD_DEBUG)" == "1" ]]; then kdefs+=" -DENABLE_USB_KBD_DEBUG"; fi; \
 	fi; \
+	if [[ "$(USB_NET)" == "1" ]]; then \
+		kdefs+=" -DENABLE_USB_NET"; \
+	fi; \
 	$(MAKE) -C "$(AARCH64_DIR)" CROSS="$(AARCH64_CROSS)" USERPROG="$(USERPROG)" KERNEL_DEFS="$$kdefs" all
 	@args=( --kernel "$(AARCH64_IMG)" --dtb "$(DTB)" --mem "$(MEM)" ); \
 	if [[ "$(GFX)" == "1" ]]; then \

@@ -78,6 +78,11 @@ void kmain(unsigned long dtb_ptr) {
         /* Enable periodic timer IRQs so the scheduler can truly idle with `wfi`. */
         irq_init();
 
+    #if defined(ENABLE_USB_KBD) || defined(ENABLE_USB_NET)
+        /* Polled USB devices (kbd + usb-net). Needs time+MMU. */
+        usb_init();
+    #endif
+
     #ifdef DEBUG_IRQ_REGTEST
         uart_write("irq: regtest...\n");
         int irq_ok = irq_regtest();
@@ -105,14 +110,6 @@ void kmain(unsigned long dtb_ptr) {
 
             /* Quick ANSI smoke test (colors + reset). */
             termfb_write_ansi("\x1b[32mANSI ok\x1b[0m\n\n");
-
-        #if defined(ENABLE_USB_KBD) || defined(ENABLE_USB_NET)
-            /*
-             * Experimental: polled USB devices (kbd + usb-net).
-             * Initialize after time + MMU, and after termfb is ready so logs are visible.
-             */
-            usb_init();
-        #endif
         }
     #endif
 
