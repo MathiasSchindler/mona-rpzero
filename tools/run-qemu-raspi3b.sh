@@ -11,6 +11,7 @@ Usage:
     [--usb-kbd] \
     [--no-usb-net] \
     [--usb-net-backend user|tap] \
+    [--usb-net-mac xx:xx:xx:xx:xx:xx] \
     [--tap-if name] \
     [--serial stdio|vc|null] \
     [--monitor none|stdio|vc] \
@@ -46,6 +47,7 @@ MONITOR_BACKEND=""
 USB_KBD=0
 USB_NET=1
 USB_NET_BACKEND="user"
+USB_NET_MAC=""
 TAP_IF=""
 
 while [[ $# -gt 0 ]]; do
@@ -60,6 +62,7 @@ while [[ $# -gt 0 ]]; do
     --usb-kbd) USB_KBD=1; shift;;
     --no-usb-net) USB_NET=0; shift;;
     --usb-net-backend) USB_NET_BACKEND="$2"; shift 2;;
+    --usb-net-mac) USB_NET_MAC="$2"; shift 2;;
     --tap-if) TAP_IF="$2"; shift 2;;
     --serial) SERIAL_BACKEND="$2"; shift 2;;
     --monitor) MONITOR_BACKEND="$2"; shift 2;;
@@ -160,7 +163,11 @@ if [[ "$USB_NET" -eq 1 ]]; then
   case "$USB_NET_BACKEND" in
     user)
       # Optional: user-mode networking. Enable IPv6 explicitly.
-      cmd+=( -netdev user,id=net0,ipv6=on -device usb-net,netdev=net0 )
+      if [[ -n "$USB_NET_MAC" ]]; then
+        cmd+=( -netdev user,id=net0,ipv6=on -device usb-net,netdev=net0,mac="$USB_NET_MAC" )
+      else
+        cmd+=( -netdev user,id=net0,ipv6=on -device usb-net,netdev=net0 )
+      fi
       ;;
     tap)
       if [[ -z "$TAP_IF" ]]; then
@@ -193,7 +200,11 @@ EOF
       fi
 
       # Host TAP networking for realistic L2 IPv6 tests (RA/SLAAC/NDP).
-      cmd+=( -netdev tap,id=net0,ifname="$TAP_IF",script=no,downscript=no -device usb-net,netdev=net0 )
+      if [[ -n "$USB_NET_MAC" ]]; then
+        cmd+=( -netdev tap,id=net0,ifname="$TAP_IF",script=no,downscript=no -device usb-net,netdev=net0,mac="$USB_NET_MAC" )
+      else
+        cmd+=( -netdev tap,id=net0,ifname="$TAP_IF",script=no,downscript=no -device usb-net,netdev=net0 )
+      fi
       ;;
     *)
       echo "Unknown --usb-net-backend: $USB_NET_BACKEND (expected: user|tap)" >&2

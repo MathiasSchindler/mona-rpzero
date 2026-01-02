@@ -679,6 +679,71 @@ static void ipv6_make_global_from_prefix64(uint8_t out_ip[16], const uint8_t pre
     memcpy_u8(out_ip + 8, ll_ip + 8, 8);
 }
 
+static int ipv6_send_icmp(netif_t *nif,
+                          const uint8_t src_ip_opt[16],
+                          const uint8_t dst_ip[16],
+                          const uint8_t dst_mac[6],
+                          uint8_t hop_limit,
+                          uint8_t icmp_type,
+                          uint8_t icmp_code,
+                          const uint8_t *icmp_body,
+                          size_t icmp_body_len);
+
+static int send_unsolicited_neighbor_advertisement(netif_t *nif, const uint8_t target_ip[16]) {
+    if (!nif || !target_ip) return -1;
+
+    /* ICMPv6 NA body:
+     * 4 bytes flags/reserved + 16 bytes target + option (TLLA) 8 bytes.
+     */
+    uint8_t body[4 + 16 + 8];
+    for (size_t i = 0; i < sizeof(body); i++) body[i] = 0;
+
+    /* Unsolicited NA: S=0, O=1. */
+    body[0] = 0x20;
+    memcpy_u8(body + 4, target_ip, 16);
+    body[4 + 16 + 0] = 2;
+    body[4 + 16 + 1] = 1;
+    memcpy_u8(body + 4 + 16 + 2, nif->mac, 6);
+
+    /* Send to all-nodes multicast (ff02::1). */
+    uint8_t dst_ip[16];
+    for (int i = 0; i < 16; i++) dst_ip[i] = 0;
+    dst_ip[0] = 0xff;
+    dst_ip[1] = 0x02;
+    dst_ip[15] = 0x01;
+
+    uint8_t dst_mac[6];
+    ipv6_multicast_to_eth(dst_ip, dst_mac);
+
+    /* 1) Multicast: helps passive listeners learn us. */
+    (void)ipv6_send_icmp(nif, /*src_ip_opt=*/target_ip, dst_ip, dst_mac,
+                         /*hop_limit=*/255, ICMPV6_NEIGHBOR_ADVERT, 0, body, sizeof(body));
+
+    /* 2) Unicast to router (if known): encourages the host/router to install a
+     * neighbor cache entry for our global address without requiring multicast NS.
+     */
+    if (nif->ipv6_router_valid) {
+        uint8_t rmac[6];
+        if (nd_lookup_mac(nif->ipv6_router_ll, rmac) == 0) {
+            /* Prefer router global (::1 within the learned /64) if available; some stacks
+             * may drop ND messages sent to a link-local destination with a global source.
+             */
+            if (nif->ipv6_prefix_len == 64) {
+                uint8_t router_global[16];
+                memcpy_u8(router_global, nif->ipv6_prefix, 16);
+                for (int i = 8; i < 16; i++) router_global[i] = 0;
+                router_global[15] = 1;
+                (void)ipv6_send_icmp(nif, /*src_ip_opt=*/target_ip, router_global, rmac,
+                                     /*hop_limit=*/255, ICMPV6_NEIGHBOR_ADVERT, 0, body, sizeof(body));
+            }
+            (void)ipv6_send_icmp(nif, /*src_ip_opt=*/target_ip, nif->ipv6_router_ll, rmac,
+                                 /*hop_limit=*/255, ICMPV6_NEIGHBOR_ADVERT, 0, body, sizeof(body));
+        }
+    }
+
+    return 0;
+}
+
 static void uart_write_ipv6_hex(const uint8_t ip[16]) {
     static const char *hex = "0123456789abcdef";
     char buf[6];
@@ -1150,10 +1215,18 @@ void net_ipv6_input(netif_t *nif, const uint8_t src_mac[6], const uint8_t *pkt, 
                     ipv6_make_global_from_prefix64(new_global, prefix, nif->ipv6_ll);
 
                     /* Install prefix + global address (best-effort, no DAD yet). */
+                    int send_una = !nif->ipv6_global_valid || !memeq(nif->ipv6_global, new_global, 16);
                     memcpy_u8(nif->ipv6_prefix, prefix, 16);
                     nif->ipv6_prefix_len = prefix_len;
                     memcpy_u8(nif->ipv6_global, new_global, 16);
                     nif->ipv6_global_valid = 1;
+
+                    /* Help the host learn our global->MAC mapping promptly.
+                     * This avoids relying on host-to-guest multicast NS delivery.
+                     */
+                    if (send_una) {
+                        (void)send_unsolicited_neighbor_advertisement(nif, nif->ipv6_global);
+                    }
 
                     uart_write("ipv6: slaac global=");
                     uart_write_ipv6_hex(nif->ipv6_global);

@@ -289,7 +289,19 @@ static int rndis_send_cmd(uint8_t dev_addr, int low_speed, uint8_t ctrl_if, cons
         .wIndex = ctrl_if,
         .wLength = len,
     };
-    return usb_host_control_xfer(dev_addr, low_speed, req, (uint8_t *)buf, len, 0);
+
+    /* DWC2 + cache maintenance is sensitive to buffer alignment.
+     * Use an aligned scratch buffer for small control-plane messages.
+     */
+    uint8_t tmp[512] __attribute__((aligned(64)));
+    const uint8_t *src = (const uint8_t *)buf;
+    uint8_t *xfer_buf = (uint8_t *)buf;
+    if (src && len <= sizeof(tmp)) {
+        for (uint16_t i = 0; i < len; i++) tmp[i] = src[i];
+        xfer_buf = tmp;
+    }
+
+    return usb_host_control_xfer(dev_addr, low_speed, req, xfer_buf, len, 0);
 }
 
 static int rndis_get_resp(uint8_t dev_addr, int low_speed, uint8_t ctrl_if, void *buf, uint16_t buf_len, uint32_t *out_got) {
@@ -300,8 +312,27 @@ static int rndis_get_resp(uint8_t dev_addr, int low_speed, uint8_t ctrl_if, void
         .wIndex = ctrl_if,
         .wLength = buf_len,
     };
+
+    uint8_t tmp[512] __attribute__((aligned(64)));
+    uint8_t *xfer_buf = (uint8_t *)buf;
+    uint16_t xfer_len = buf_len;
+    if (buf_len <= sizeof(tmp)) {
+        xfer_buf = tmp;
+        xfer_len = (uint16_t)sizeof(tmp);
+        /* Preserve requested length in setup packet. */
+        req.wLength = buf_len;
+    }
+
     uint32_t got = 0;
-    int rc = usb_host_control_xfer(dev_addr, low_speed, req, (uint8_t *)buf, buf_len, &got);
+    int rc = usb_host_control_xfer(dev_addr, low_speed, req, xfer_buf, req.wLength, &got);
+    if (rc == 0 && buf && xfer_buf == tmp) {
+        uint32_t n = got;
+        if (n > buf_len) n = buf_len;
+        for (uint32_t i = 0; i < n; i++) ((uint8_t *)buf)[i] = tmp[i];
+        got = n;
+    }
+
+    (void)xfer_len;
     if (out_got) *out_got = got;
     return rc;
 }
@@ -658,6 +689,32 @@ int usb_net_try_bind(const usb_device_t *dev) {
                 if (rndis_set_packet_filter(&g_usbnet, filter) != 0) {
                     uart_write("usb-net: WARN: rndis set packet filter failed\n");
                 }
+
+                /* Some RNDIS implementations (including QEMU's usb-net gadget) may
+                 * require an explicit multicast MAC list to deliver IPv6 multicast
+                 * frames (notably solicited-node NDP).
+                 *
+                 * Keep the list length aligned (4 MACs => 24 bytes) to avoid quirks
+                 * around non-4-byte-aligned lengths.
+                 */
+                {
+                    uint8_t mlist[6 * 4];
+                    /* 33:33:00:00:00:01 (ff02::1 all-nodes) */
+                    mlist[0] = 0x33; mlist[1] = 0x33; mlist[2] = 0x00; mlist[3] = 0x00; mlist[4] = 0x00; mlist[5] = 0x01;
+                    /* 33:33:00:00:00:02 (ff02::2 all-routers) */
+                    mlist[6] = 0x33; mlist[7] = 0x33; mlist[8] = 0x00; mlist[9] = 0x00; mlist[10] = 0x00; mlist[11] = 0x02;
+                    /* 33:33:ff:XX:XX:XX (solicited-node; last 24 bits from our IID/MAC) */
+                    mlist[12] = 0x33; mlist[13] = 0x33; mlist[14] = 0xff;
+                    mlist[15] = g_usbnet.nif.mac[3];
+                    mlist[16] = g_usbnet.nif.mac[4];
+                    mlist[17] = g_usbnet.nif.mac[5];
+                    /* 33:33:00:00:00:16 (ff02::16 MLDv2 reports; harmless extra) */
+                    mlist[18] = 0x33; mlist[19] = 0x33; mlist[20] = 0x00; mlist[21] = 0x00; mlist[22] = 0x00; mlist[23] = 0x16;
+
+                    if (rndis_set_multicast_list(&g_usbnet, mlist, 4) != 0) {
+                        uart_write("usb-net: WARN: rndis set multicast list failed\n");
+                    }
+                }
                 g_usbnet.mode = USBNET_MODE_RNDIS;
             }
         } else {
@@ -725,52 +782,70 @@ void usb_net_poll(void) {
         g_usbnet.in_pid = (g_usbnet.in_pid == USB_PID_DATA0) ? USB_PID_DATA1 : USB_PID_DATA0;
 
         if (g_usbnet.mode == USBNET_MODE_RNDIS) {
-            if (got < sizeof(rndis_packet_msg_t)) {
-                g_usbnet.rx_rndis_drop_small++;
-                continue;
-            }
-            rndis_packet_msg_t *p = (rndis_packet_msg_t *)buf;
-            g_usbnet.last_msg_type = p->msg_type;
-            if (p->msg_type != 0x00000001u) {
-                g_usbnet.rx_rndis_drop_type++;
-                continue;
-            }
-
-            uint32_t data_len = p->data_len;
-            uint32_t data_off = p->data_offset;
-
-            g_usbnet.last_data_len = data_len;
-            g_usbnet.last_data_off = data_off;
-
-            /* RNDIS quirk tolerance:
-             * - Spec: DataOffset is from the start of the DataOffset field (offset 8).
-             * - Some implementations appear to treat it as from the start of the message.
-             * Try both and pick the one that looks like an Ethernet frame.
+            /* QEMU/virtual RNDIS can coalesce multiple RNDIS packet messages into
+             * a single bulk-IN transfer. Parse all messages we can.
              */
-            uint8_t *cand1 = buf + 8u + data_off;
-            uint8_t *cand2 = buf + data_off;
+            uint32_t off = 0;
+            while (off + sizeof(rndis_packet_msg_t) <= got) {
+                uint8_t *base = buf + off;
+                rndis_packet_msg_t *p = (rndis_packet_msg_t *)base;
 
-            uint8_t *data = 0;
-            if ((uint64_t)(cand1 - buf) + data_len <= got && looks_like_ipv6_eth_frame(cand1, data_len)) {
-                data = cand1;
-            } else if ((uint64_t)(cand2 - buf) + data_len <= got && looks_like_ipv6_eth_frame(cand2, data_len)) {
-                data = cand2;
-            } else {
-                /* Fallback: keep the original spec interpretation if in-bounds. */
-                if ((uint64_t)(cand1 - buf) + data_len <= got) data = cand1;
-                else if ((uint64_t)(cand2 - buf) + data_len <= got) data = cand2;
-                else {
+                uint32_t msg_len = p->msg_len;
+                if (msg_len < sizeof(rndis_packet_msg_t)) {
+                    g_usbnet.rx_rndis_drop_small++;
+                    break;
+                }
+                if ((uint64_t)off + msg_len > got) {
                     g_usbnet.rx_rndis_drop_bounds++;
+                    break;
+                }
+
+                g_usbnet.last_msg_type = p->msg_type;
+                if (p->msg_type != 0x00000001u) {
+                    /* Not a data packet: skip. */
+                    g_usbnet.rx_rndis_drop_type++;
+                    off += msg_len;
                     continue;
                 }
-            }
 
-            if (data_len >= 14u) {
-                g_usbnet.last_ethertype = be16(data + 12);
-            }
+                uint32_t data_len = p->data_len;
+                uint32_t data_off = p->data_offset;
 
-            g_usbnet.rx_rndis_ok++;
-            netif_rx_frame(&g_usbnet.nif, data, (size_t)data_len);
+                g_usbnet.last_data_len = data_len;
+                g_usbnet.last_data_off = data_off;
+
+                /* RNDIS quirk tolerance:
+                 * - Spec: DataOffset is from the start of the DataOffset field (offset 8).
+                 * - Some implementations appear to treat it as from the start of the message.
+                 */
+                uint8_t *cand1 = base + 8u + data_off;
+                uint8_t *cand2 = base + data_off;
+
+                uint8_t *data = 0;
+                if ((uint64_t)(cand1 - base) + data_len <= msg_len && looks_like_ipv6_eth_frame(cand1, data_len)) {
+                    data = cand1;
+                } else if ((uint64_t)(cand2 - base) + data_len <= msg_len && looks_like_ipv6_eth_frame(cand2, data_len)) {
+                    data = cand2;
+                } else {
+                    /* Fallback: keep the original spec interpretation if in-bounds. */
+                    if ((uint64_t)(cand1 - base) + data_len <= msg_len) data = cand1;
+                    else if ((uint64_t)(cand2 - base) + data_len <= msg_len) data = cand2;
+                    else {
+                        g_usbnet.rx_rndis_drop_bounds++;
+                        off += msg_len;
+                        continue;
+                    }
+                }
+
+                if (data_len >= 14u) {
+                    g_usbnet.last_ethertype = be16(data + 12);
+                }
+
+                g_usbnet.rx_rndis_ok++;
+                netif_rx_frame(&g_usbnet.nif, data, (size_t)data_len);
+
+                off += msg_len;
+            }
         } else {
             netif_rx_frame(&g_usbnet.nif, buf, (size_t)got);
         }
