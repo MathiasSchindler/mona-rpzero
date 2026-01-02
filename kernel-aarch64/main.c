@@ -86,7 +86,7 @@ void kmain(unsigned long dtb_ptr) {
         /* Best-effort framebuffer bring-up (QEMU-first). */
         if (fb_init_from_mailbox_ex(FB_REQ_W, FB_REQ_H, FB_REQ_W, FB_REQ_VIRT_H, FB_REQ_BPP) == 0) {
             /* Bring up a very small framebuffer console for early gfx testing. */
-            (void)termfb_init(0x00ffffffu, 0x00203040u);
+            (void)termfb_init(0x00e0e0e0u, 0x00000000u);
             uart_set_mirror(termfb_putc_ansi);
             termfb_write("mona-rpzero framebuffer console\n");
 

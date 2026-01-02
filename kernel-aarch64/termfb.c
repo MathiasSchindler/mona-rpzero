@@ -139,11 +139,11 @@ static uint32_t termfb_ansi_color_to_xrgb8888(uint32_t color_idx, int bright) {
         0x00000000u, /* black */
         0x00aa0000u, /* red */
         0x0000aa00u, /* green */
-        0x00aa5500u, /* yellow */
+        0x00aaaa00u, /* yellow */
         0x000000aau, /* blue */
         0x00aa00aau, /* magenta */
         0x0000aaaau, /* cyan */
-        0x00aaaaaau, /* white (dim) */
+        0x00c0c0c0u, /* white (dim) */
     };
     static const uint32_t brightv[8] = {
         0x00555555u,

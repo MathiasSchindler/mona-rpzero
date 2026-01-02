@@ -723,7 +723,7 @@ int main(int argc, char **argv, char **envp) {
     /* Tool smoke test: xargs basic pipe. */
     {
         char out[256];
-        const char *const xa_argv[] = {"sh", "-c", "/bin/printf \"a b\\n\" | /bin/xargs /bin/echo", 0};
+        const char *const xa_argv[] = {"sh", "-c", "/bin/echo a b | /bin/xargs /bin/echo", 0};
         if (run_capture("/bin/sh", xa_argv, out, sizeof(out)) != 0) {
             sys_puts("[kinit] xargs capture failed\n");
             failed |= 1;
