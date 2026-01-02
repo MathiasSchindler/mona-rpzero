@@ -306,14 +306,26 @@ uint64_t sys_mona_ping6(trap_frame_t *tf,
 
     int rc = net_ipv6_ping6_start(g_cur_proc, nif, dst_ip, (uint16_t)ident, (uint16_t)seq);
     if (rc < 0) {
-        /* Fail fast, don't block. */
-        cur->pending_ping6 = 0;
-        cur->state = PROC_RUNNABLE;
-        cur->sleep_deadline_ns = 0;
-        return (uint64_t)(int64_t)rc;
+        /* If the network isn't configured yet (SLAAC/RA pending), wait/retry within the timeout. */
+        if (rc != -(int)EAGAIN && rc != -(int)EBUSY) {
+            cur->pending_ping6 = 0;
+            cur->state = PROC_RUNNABLE;
+            cur->sleep_deadline_ns = 0;
+            return (uint64_t)(int64_t)rc;
+        }
     }
 
 retry_wait:
+    if (cur->pending_ping6 && !cur->ping6_done && cur->ping6_start_ns == 0) {
+        /* Not started yet (e.g., waiting for SLAAC). Retry kick. */
+        int trc = net_ipv6_ping6_start(g_cur_proc, nif, dst_ip, (uint16_t)ident, (uint16_t)seq);
+        if (trc < 0 && trc != -(int)EAGAIN && trc != -(int)EBUSY) {
+            cur->ping6_done = 1;
+            cur->ping6_ret = (uint64_t)(int64_t)trc;
+            net_ipv6_ping6_cancel(g_cur_proc);
+        }
+    }
+
     int next = sched_pick_next_runnable();
     if (next >= 0 && next != g_cur_proc) {
         proc_switch_to(next, tf);

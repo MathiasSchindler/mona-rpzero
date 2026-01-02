@@ -262,7 +262,17 @@ int main(int argc, char **argv, char **envp) {
             return 1;
         }
     } else {
-        /* Prefer RA-learned DNS server (RDNSS). Fallback to Google DNS. */
+        /* Prefer RA-learned DNS server (RDNSS). On TAP, this may arrive slightly after boot. */
+        uint64_t wait_ms = 500;
+        uint64_t start_ms = now_ms_monotonic();
+        while (sys_mona_net6_get_dns(dns_ip) != 0) {
+            if (now_ms_monotonic() - start_ms >= wait_ms) break;
+            linux_timespec_t ts;
+            ts.tv_sec = 0;
+            ts.tv_nsec = 50 * 1000 * 1000;
+            (void)sys_nanosleep(&ts, 0);
+        }
+
         if (sys_mona_net6_get_dns(dns_ip) != 0) {
             /* QEMU user-mode networking (slirp) commonly provides an IPv6 DNS server at fec0::3. */
             const uint8_t slirp[16] = {0xfe,0xc0,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x03};
@@ -340,8 +350,8 @@ int main(int argc, char **argv, char **envp) {
         }
 
         uint64_t rc = sys_mona_udp6_sendto(fd, dns_ip, DNS_PORT, msg, off);
-        if ((int64_t)rc == -(int64_t)11) {
-            /* EAGAIN: neighbor unresolved */
+        if ((int64_t)rc == -(int64_t)11 || (int64_t)rc == -(int64_t)101 || (int64_t)rc == -(int64_t)97) {
+            /* EAGAIN/ENETUNREACH/EAFNOSUPPORT: still bringing IPv6 up (SLAAC/RA/NDP). */
             linux_timespec_t ts;
             ts.tv_sec = 0;
             ts.tv_nsec = 100 * 1000 * 1000;

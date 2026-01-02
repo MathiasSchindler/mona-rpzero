@@ -224,3 +224,41 @@ then QEMU doesn’t have permission to create/configure a TAP device.
 Creating a TAP only gives you a host L2 interface. To reach the wider network you typically bridge it (or route/NAT) and/or run a router advertisement daemon on the host.
 
 For QEMU *user-mode* networking (`USB_NET_BACKEND=user`), Router Advertisements typically do **not** include RDNSS. In that mode QEMU commonly provides an IPv6 DNS server at `fec0::3` (slirp DNS). The userland `dns6`/`ping6` defaults try RA RDNSS first, then `fec0::3`, then fall back to Google DNS.
+
+### IPv6 note: slirp may be incomplete
+
+In some setups, QEMU user-mode IPv6 will provide SLAAC (so you see a global IPv6 and a router in the kernel log), but still fail to deliver ICMPv6 echo replies and/or UDP replies. A common symptom is:
+
+- `ping6 fe80::2` times out
+- `dns6 ...` hits `recvfrom failed errno=110`
+- `/proc/net` shows `tx_frames` increasing but `rx_frames` staying flat
+
+If you hit this, switch to TAP and provide RA + DNS on the host.
+
+### TAP IPv6 bring-up: RA (RDNSS) + DNS on the host
+
+The repo includes helper scripts to set up a small IPv6-only network on a TAP. By default, `tools/tap6-up.sh` uses `dnsmasq` to:
+
+- send Router Advertisements for SLAAC, including RDNSS, and
+- provide a DNS forwarder bound to the TAP.
+
+- Bring up TAP IPv6 + RA + DNS (host, as root):
+	- `sudo tools/tap6-up.sh mona0`
+- Run QEMU against that TAP:
+	- `make run USB_NET=1 USB_NET_BACKEND=tap TAP_IF=mona0`
+- Tear down:
+	- `sudo tools/tap6-down.sh mona0`
+
+Defaults:
+- Prefix: `fd42:6d6f:6e61:1::/64`
+- Host IP + DNS (RDNSS): `fd42:6d6f:6e61:1::1`
+
+Debugging (host): if the guest doesn't get a global IPv6/default route, enable RA packet capture:
+
+- `sudo MONA_TAP_DEBUG=1 tools/tap6-up.sh mona0`
+
+This writes a pcap to `/tmp/mona-tap6-mona0/dnsmasq.pcap` which should contain Router Advertisements.
+
+Optional (Linux host only): enable NAT66 so the guest can reach the public Internet:
+
+- `sudo MONA_ENABLE_NAT66=1 tools/tap6-up.sh mona0`

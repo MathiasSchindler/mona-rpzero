@@ -158,6 +158,13 @@ static void usbnet_delay_ns(uint64_t ns) {
 #define OID_GEN_CURRENT_PACKET_FILTER 0x0001010Eu
 #define OID_802_3_CURRENT_ADDRESS     0x01010102u
 
+/* NDIS packet filter bits (OID_GEN_CURRENT_PACKET_FILTER). */
+#define RNDIS_PACKET_TYPE_DIRECTED     0x00000001u
+#define RNDIS_PACKET_TYPE_MULTICAST    0x00000002u
+#define RNDIS_PACKET_TYPE_ALL_MULTICAST 0x00000004u
+#define RNDIS_PACKET_TYPE_BROADCAST    0x00000008u
+#define RNDIS_PACKET_TYPE_PROMISCUOUS  0x00000020u
+
 typedef struct __attribute__((packed)) {
     uint32_t msg_type;
     uint32_t msg_len;
@@ -554,7 +561,18 @@ int usb_net_try_bind(const usb_device_t *dev) {
                 if (rndis_query(&g_usbnet, OID_802_3_CURRENT_ADDRESS, mac, sizeof(mac), &got) == 0 && got == 6) {
                     for (int i = 0; i < 6; i++) g_usbnet.nif.mac[i] = mac[i];
                 }
-                (void)rndis_set_packet_filter(&g_usbnet, 0x0000000Fu);
+
+                /* Be permissive: ensure we receive multicast (NDP/RA) and, on some
+                 * virtual implementations, also enable promiscuous to avoid missed RX.
+                 */
+                uint32_t filter = RNDIS_PACKET_TYPE_DIRECTED |
+                                  RNDIS_PACKET_TYPE_MULTICAST |
+                                  RNDIS_PACKET_TYPE_ALL_MULTICAST |
+                                  RNDIS_PACKET_TYPE_BROADCAST |
+                                  RNDIS_PACKET_TYPE_PROMISCUOUS;
+                if (rndis_set_packet_filter(&g_usbnet, filter) != 0) {
+                    uart_write("usb-net: WARN: rndis set packet filter failed\n");
+                }
                 g_usbnet.mode = USBNET_MODE_RNDIS;
             }
         } else {

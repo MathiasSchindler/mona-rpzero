@@ -10,8 +10,11 @@
 #   GFX=0|1            (default: 1)
 #   USB_KBD=0|1        (default: 1)
 #   USB_NET=0|1        (default: 1)
-#   USB_NET_BACKEND=user|tap (default: user)
+#   USB_NET_BACKEND=user|tap (default: tap)
 #   TAP_IF=name         (default: mona0)  # only used when USB_NET_BACKEND=tap
+#   TAP_AUTO_UP=0|1     (default: 1)  # auto-run tools/tap6-up.sh before QEMU
+#   TAP_AUTO_DOWN=0|1   (default: 1)  # auto-run tools/tap6-down.sh after QEMU
+#   SUDO=cmd            (default: sudo)
 #   SERIAL=stdio|vc|null  (default: stdio)
 #   MONITOR=none|stdio|vc (default: none)
 #   USB_KBD_DEBUG=0|1  (default: 0)  # enables extra kernel USB debug logs
@@ -63,8 +66,11 @@ USERPROG ?= init
 GFX ?= 1
 USB_KBD ?= 1
 USB_NET ?= 1
-USB_NET_BACKEND ?= user
+USB_NET_BACKEND ?= tap
 TAP_IF ?= mona0
+TAP_AUTO_UP ?= 1
+TAP_AUTO_DOWN ?= 1
+SUDO ?= sudo
 SERIAL ?= stdio
 MONITOR ?= none
 USB_KBD_DEBUG ?= 0
@@ -135,6 +141,27 @@ run: userland
 		if [[ "$(USB_NET_BACKEND)" == "tap" ]]; then args+=( --tap-if "$(TAP_IF)" ); fi; \
 	fi; \
 	if [[ "$(USB_KBD)" == "1" ]]; then args+=( --usb-kbd ); fi; \
+	\
+		: "Optional: bring up TAP IPv6 router automatically so guest has networking."; \
+	tap_did_up=0; \
+	if [[ "$(USB_NET)" == "1" && "$(USB_NET_BACKEND)" == "tap" && "$(TAP_AUTO_UP)" == "1" ]]; then \
+		wan_if="$${MONA_WAN_IF:-}"; \
+		if [[ "$${MONA_ENABLE_NAT66:-0}" == "1" && -z "$$wan_if" ]]; then \
+			wan_if="$$(ip route show default 2>/dev/null | awk '{print $$5; exit}')"; \
+		fi; \
+		echo "Auto TAP: bringing up $(TAP_IF) (MONA_TAP_DEBUG=$${MONA_TAP_DEBUG:-0} MONA_ENABLE_NAT66=$${MONA_ENABLE_NAT66:-0} MONA_WAN_IF=$$wan_if)"; \
+		MONA_WAN_IF="$$wan_if" $(SUDO) env MONA_TAP_DEBUG="$${MONA_TAP_DEBUG:-0}" MONA_ENABLE_NAT66="$${MONA_ENABLE_NAT66:-0}" MONA_WAN_IF="$$wan_if" tools/tap6-up.sh "$(TAP_IF)"; \
+		tap_did_up=1; \
+	fi; \
+	\
+	cleanup() { \
+		if [[ "$$tap_did_up" == "1" && "$(TAP_AUTO_DOWN)" == "1" ]]; then \
+			echo "Auto TAP: tearing down $(TAP_IF)"; \
+			$(SUDO) env MONA_TAP_DEBUG="$${MONA_TAP_DEBUG:-0}" MONA_ENABLE_NAT66="$${MONA_ENABLE_NAT66:-0}" tools/tap6-down.sh "$(TAP_IF)" || true; \
+		fi; \
+	}; \
+	trap cleanup EXIT; \
+	\
 	set +e; bash tools/run-qemu-raspi3b.sh "$${args[@]}"; rc=$$?; if [[ $$rc -eq 0 || $$rc -eq 112 || $$rc -eq 128 ]]; then exit 0; fi; exit $$rc
 
 test:

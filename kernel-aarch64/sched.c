@@ -243,18 +243,16 @@ int sched_pick_next_runnable(void) {
 
         /* Tickless idle policy:
          * - If sleepers exist: wake at the earliest sleep deadline.
-         * - If blocked console I/O exists:
-         *   - for IRQ-driven input, no tick is needed (UART RX IRQ wakes us).
-         *   - for polling input (USB kbd), also wake at the next poll deadline.
+         * - If any polling-based devices exist (USB kbd/net): also wake at the
+         *   next poll deadline so we can receive packets/keys and wake sleepers.
          *
-         * When both sleepers and polling I/O exist, we must wake for the
-         * earliest of (sleep deadline, poll deadline) to keep input responsive.
+         * Note: network RX is polled (usb-net). Without periodic wakeups while
+         * tasks are sleeping, ping/udp replies and RAs cannot be received to
+         * wake those sleepers early.
          */
-        if (has_blocked_io && !console_in_needs_polling()) {
-            if (!has_sleepers) {
-                /* Only IRQ-driven input can wake us; no tick required. */
-                time_tick_disable();
-            }
+        if (!has_sleepers && has_blocked_io && !console_in_needs_polling()) {
+            /* Only IRQ-driven input can wake us; no tick required. */
+            time_tick_disable();
         } else {
             uint64_t now = time_now_ns();
             if (now == 0) {
@@ -266,7 +264,7 @@ int sched_pick_next_runnable(void) {
                     wake_ns = earliest;
                 }
 
-                if (has_blocked_io && console_in_needs_polling()) {
+                if (console_in_needs_polling()) {
                     uint64_t next_poll = console_in_next_poll_deadline_ns();
                     if (next_poll == 0) {
                         /* No deadline yet; wake immediately to establish one. */

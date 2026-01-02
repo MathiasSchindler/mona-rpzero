@@ -491,6 +491,11 @@ int net_udp6_sendto(uint32_t sock_id,
     if (!nif) return -(int)ENODEV;
     if (!nif->ipv6_ll_valid) net_ipv6_configure_netif(nif);
 
+    /* If we're asked to send off-link before SLAAC/default router is learned, let userland retry. */
+    if (!ipv6_is_linklocal(dst_ip) && !ipv6_is_multicast(dst_ip) && !nif->ipv6_global_valid) {
+        return -(int)EAGAIN;
+    }
+
     if (!s->bound) {
         int brc = udp6_bind_ephemeral(sock_id, 0);
         if (brc < 0) return brc;
@@ -508,7 +513,11 @@ int net_udp6_sendto(uint32_t sock_id,
     }
 
     int rc = ipv6_select_next_hop(nif, dst_ip, nh_ip);
-    if (rc < 0) return rc;
+    if (rc < 0) {
+        /* Likely missing RA/default route; allow userland to retry within its timeout budget. */
+        if (rc == -(int)ENETUNREACH) return -(int)EAGAIN;
+        return rc;
+    }
 
     if (nd_lookup_mac(nh_ip, dst_mac) != 0) {
         (void)send_neighbor_solicitation(nif, nh_ip);
@@ -534,7 +543,7 @@ int net_udp6_sendto(uint32_t sock_id,
     }
 
     const uint8_t *src_ip = ipv6_select_src_ip(nif, dst_ip);
-    if (!src_ip) return -(int)EAFNOSUPPORT;
+    if (!src_ip) return -(int)EAGAIN;
     rc = udp6_send_raw(nif, src_ip, dst_ip, dst_mac, s->bound_port, dst_port, payload, payload_len);
     return (rc == 0) ? (int)payload_len : rc;
 }
@@ -654,14 +663,22 @@ static void ipv6_make_global_from_prefix64(uint8_t out_ip[16], const uint8_t pre
 
 static void uart_write_ipv6_hex(const uint8_t ip[16]) {
     static const char *hex = "0123456789abcdef";
+    char buf[6];
+    buf[4] = ':';
+    buf[5] = '\0';
+
     for (int i = 0; i < 16; i += 2) {
         uint8_t b0 = ip[i];
         uint8_t b1 = ip[i + 1];
-        uart_putc(hex[(b0 >> 4) & 0x0f]);
-        uart_putc(hex[b0 & 0x0f]);
-        uart_putc(hex[(b1 >> 4) & 0x0f]);
-        uart_putc(hex[b1 & 0x0f]);
-        if (i != 14) uart_putc(':');
+        buf[0] = hex[(b0 >> 4) & 0x0f];
+        buf[1] = hex[b0 & 0x0f];
+        buf[2] = hex[(b1 >> 4) & 0x0f];
+        buf[3] = hex[b1 & 0x0f];
+        if (i == 14) {
+            buf[4] = '\0';
+        }
+        uart_write(buf);
+        buf[4] = ':';
     }
 }
 
@@ -834,14 +851,15 @@ int net_ipv6_ping6_start(int proc_idx, netif_t *nif, const uint8_t dst_ip[16], u
     if (!nif || !dst_ip) return -(int)EINVAL;
     if (proc_idx < 0 || proc_idx >= (int)MAX_PROCS) return -(int)EINVAL;
 
+    if (!nif->ipv6_ll_valid) {
+        /* Ensure we have a link-local address and send an RS to trigger SLAAC. */
+        net_ipv6_configure_netif(nif);
+    }
+
     int dst_is_mcast = ipv6_is_multicast(dst_ip);
     if (!ipv6_is_linklocal(dst_ip) && !dst_is_mcast) {
         /* Off-link/global requires us to have a configured global address. */
-        if (!nif->ipv6_global_valid) return -(int)EAFNOSUPPORT;
-    }
-
-    if (!nif->ipv6_ll_valid) {
-        net_ipv6_configure_netif(nif);
+        if (!nif->ipv6_global_valid) return -(int)EAGAIN;
     }
 
     if (g_ping_inflight) {
@@ -923,6 +941,23 @@ void net_ipv6_input(netif_t *nif, const uint8_t src_mac[6], const uint8_t *pkt, 
 
     if (!nif->ipv6_ll_valid) {
         net_ipv6_configure_netif(nif);
+    }
+
+    /*
+     * Opportunistically learn the sender's MAC from any IPv6 packet.
+     * This is important for early bring-up / QEMU user networking where NDP
+     * replies might be missing or delayed, but Router Advertisements still
+     * provide a trustworthy (src IP, src MAC) pair.
+     */
+    int src_is_unspec = 1;
+    for (int i = 0; i < 16; i++) {
+        if (ip6->src[i] != 0) {
+            src_is_unspec = 0;
+            break;
+        }
+    }
+    if (!src_is_unspec && !ipv6_is_multicast(ip6->src)) {
+        nd_update(ip6->src, src_mac);
     }
 
     const uint8_t *payload = pkt + sizeof(ipv6_hdr_t);
