@@ -30,5 +30,6 @@
 #define EBUSY 16ull
 #define EMSGSIZE 90ull
 #define EAFNOSUPPORT 97ull
+#define EADDRINUSE 98ull
 #define ETIMEDOUT 110ull
 #define ENETUNREACH 101ull

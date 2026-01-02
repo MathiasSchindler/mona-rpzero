@@ -5,6 +5,7 @@
 #include "errno.h"
 #include "irq.h"
 #include "mmu.h"
+#include "net_udp6.h"
 #include "proc.h"
 #include "regs.h"
 #include "sys_util.h"
@@ -108,6 +109,80 @@ static void sched_complete_ping6_if_needed(proc_t *p) {
     p->ping6_rtt_ns = 0;
     p->ping6_rtt_user = 0;
     p->ping6_ret = 0;
+}
+
+static void sched_complete_udp6_recv_if_needed(proc_t *p) {
+    if (!p) return;
+    if (!p->pending_udp6_recv) return;
+
+    udp6_dgram_t dg;
+    int rc = net_udp6_try_recv(p->pending_udp6_sock_id, &dg);
+    if (rc == 0) {
+        uint64_t n = p->pending_udp6_len;
+        if (n > (uint64_t)dg.len) n = (uint64_t)dg.len;
+
+        if (n != 0) {
+            if (write_bytes_to_user(p->pending_udp6_buf_user, dg.data, n) != 0) {
+                p->tf.x[0] = (uint64_t)(-(int64_t)EFAULT);
+            } else {
+                p->tf.x[0] = n;
+            }
+        } else {
+            p->tf.x[0] = 0;
+        }
+
+        if (p->pending_udp6_src_ip_user != 0) {
+            (void)write_bytes_to_user(p->pending_udp6_src_ip_user, dg.src_ip, 16);
+        }
+        if (p->pending_udp6_src_port_user != 0) {
+            (void)write_u16_to_user(p->pending_udp6_src_port_user, dg.src_port);
+        }
+
+        p->pending_udp6_recv = 0;
+        p->pending_udp6_sock_id = 0;
+        p->pending_udp6_fd = 0;
+        p->pending_udp6_buf_user = 0;
+        p->pending_udp6_len = 0;
+        p->pending_udp6_src_ip_user = 0;
+        p->pending_udp6_src_port_user = 0;
+        p->pending_udp6_ret = 0;
+        p->sleep_deadline_ns = 0;
+        return;
+    }
+
+    if (rc == -(int)EAGAIN) {
+        uint64_t now = time_now_ns();
+        if (p->sleep_deadline_ns != 0 && now >= p->sleep_deadline_ns) {
+            p->tf.x[0] = (uint64_t)(-(int64_t)ETIMEDOUT);
+            p->pending_udp6_recv = 0;
+            p->pending_udp6_sock_id = 0;
+            p->pending_udp6_fd = 0;
+            p->pending_udp6_buf_user = 0;
+            p->pending_udp6_len = 0;
+            p->pending_udp6_src_ip_user = 0;
+            p->pending_udp6_src_port_user = 0;
+            p->pending_udp6_ret = 0;
+            p->sleep_deadline_ns = 0;
+            return;
+        }
+
+        /* Still waiting; keep blocked. */
+        if (p->sleep_deadline_ns != 0) p->state = PROC_SLEEPING;
+        else p->state = PROC_BLOCKED_IO;
+        return;
+    }
+
+    /* Error: complete with errno. */
+    p->tf.x[0] = (uint64_t)(int64_t)rc;
+    p->pending_udp6_recv = 0;
+    p->pending_udp6_sock_id = 0;
+    p->pending_udp6_fd = 0;
+    p->pending_udp6_buf_user = 0;
+    p->pending_udp6_len = 0;
+    p->pending_udp6_src_ip_user = 0;
+    p->pending_udp6_src_port_user = 0;
+    p->pending_udp6_ret = 0;
+    p->sleep_deadline_ns = 0;
 }
 
 static int sched_any_sleepers(uint64_t *out_earliest_deadline_ns) {
@@ -233,6 +308,9 @@ void proc_switch_to(int idx, trap_frame_t *tf) {
 
     /* Complete any pending ping6 syscall now that this process address space is active. */
     sched_complete_ping6_if_needed(&g_procs[idx]);
+
+    /* Complete any pending udp6 recvfrom syscall now that this process address space is active. */
+    sched_complete_udp6_recv_if_needed(&g_procs[idx]);
 
     write_elr_el1(g_procs[idx].elr);
     tf_copy(tf, &g_procs[idx].tf);

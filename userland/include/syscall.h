@@ -285,6 +285,43 @@ static inline uint64_t sys_mona_ping6(const uint8_t dst_ip[16],
                       (uint64_t)(uintptr_t)rtt_ns_out);
 }
 
+/* mona-specific: minimal UDP-over-IPv6 support. */
+static inline uint64_t sys_mona_udp6_socket(void) {
+    return __syscall0(__NR_mona_udp6_socket);
+}
+
+static inline uint64_t sys_mona_udp6_bind(uint64_t fd, uint64_t port) {
+    return __syscall2(__NR_mona_udp6_bind, fd, port);
+}
+
+static inline uint64_t sys_mona_udp6_sendto(uint64_t fd,
+                                            const uint8_t dst_ip[16],
+                                            uint64_t dst_port,
+                                            const void *buf,
+                                            uint64_t len) {
+    return __syscall5(__NR_mona_udp6_sendto,
+                      fd,
+                      (uint64_t)(uintptr_t)dst_ip,
+                      dst_port,
+                      (uint64_t)(uintptr_t)buf,
+                      len);
+}
+
+static inline uint64_t sys_mona_udp6_recvfrom(uint64_t fd,
+                                              void *buf,
+                                              uint64_t len,
+                                              uint8_t src_ip_out[16],
+                                              uint16_t *src_port_out,
+                                              uint64_t timeout_ms) {
+    return __syscall6(__NR_mona_udp6_recvfrom,
+                      fd,
+                      (uint64_t)(uintptr_t)buf,
+                      len,
+                      (uint64_t)(uintptr_t)src_ip_out,
+                      (uint64_t)(uintptr_t)src_port_out,
+                      timeout_ms);
+}
+
 __attribute__((noreturn)) static inline void sys_exit_group(uint64_t status) {
     (void)__syscall1(__NR_exit_group, status);
     for (;;) { }

@@ -167,6 +167,31 @@ if [[ "$USB_NET" -eq 1 ]]; then
         echo "--usb-net-backend tap requires --tap-if <name>" >&2
         exit 2
       fi
+
+      if [[ ! -e /dev/net/tun ]]; then
+        echo "ERROR: /dev/net/tun not found (TAP backend requires the tun module)." >&2
+        echo "Try: sudo modprobe tun" >&2
+        exit 2
+      fi
+
+      # If /dev/net/tun isn't accessible, QEMU will fail with EPERM when trying to configure the tap.
+      # We can't reliably probe the TUNSETIFF permission without doing it, but a write permission check
+      # catches the common case on distros where /dev/net/tun is 0600 root:root.
+      if [[ ! -w /dev/net/tun ]]; then
+        cat >&2 <<EOF
+NOTE: TAP backend selected but /dev/net/tun is not writable by this user.
+You will likely get: "Operation not permitted".
+
+Recommended setup (create a persistent tap owned by you):
+  sudo tools/setup-tap.sh "$TAP_IF" "$USER"
+  make run USB_NET=1 USB_NET_BACKEND=tap TAP_IF="$TAP_IF"
+
+Alternatives:
+  sudo -E make run USB_NET=1 USB_NET_BACKEND=tap TAP_IF="$TAP_IF"
+  sudo setcap cap_net_admin+ep "$(command -v qemu-system-aarch64)"
+EOF
+      fi
+
       # Host TAP networking for realistic L2 IPv6 tests (RA/SLAAC/NDP).
       cmd+=( -netdev tap,id=net0,ifname="$TAP_IF",script=no,downscript=no -device usb-net,netdev=net0 )
       ;;

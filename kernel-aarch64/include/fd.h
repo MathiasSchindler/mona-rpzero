@@ -20,6 +20,7 @@ typedef enum {
     FDESC_PIPE = 3,
     FDESC_RAMFILE = 4,
     FDESC_PROC = 5,
+    FDESC_UDP6 = 6,
 } fdesc_kind_t;
 
 typedef struct {
@@ -48,6 +49,10 @@ typedef struct {
             uint32_t _pad;
             uint64_t off;
         } proc;
+        struct {
+            uint32_t sock_id;
+            uint32_t _pad;
+        } udp6;
         struct {
             uint32_t unused;
         } uart;

@@ -191,3 +191,34 @@ These are **ranked** by “how soon they become fun/useful” given the current 
 		 - Optional: simple capture filters (even “ethertype ipv6” is a big help)
 
 If you want the most “elementary” possible tool that still exercises the driver path before IPv6 exists, a tiny `ethsend`/`ethrecv` (raw Ethernet frames) can work — but it really wants a raw-packet userspace API, and most external hosts won’t respond to arbitrary frames unless you implement at least NDP/IPv6.
+
+## QEMU TAP networking (USB_NET_BACKEND=tap)
+
+If you run:
+
+- `make run USB_NET=1 USB_NET_BACKEND=tap`
+
+and see an error like:
+
+- `could not configure /dev/net/tun (...): Operation not permitted`
+
+then QEMU doesn’t have permission to create/configure a TAP device.
+
+### Quick fix (recommended): create a persistent TAP owned by your user
+
+1. Create the TAP interface once (needs root):
+
+- `sudo tools/setup-tap.sh mona0 "$USER"`
+
+2. Run QEMU using that interface:
+
+- `make run USB_NET=1 USB_NET_BACKEND=tap TAP_IF=mona0`
+
+### Alternatives
+
+- Run QEMU as root (simplest, but not ideal): `sudo -E make run USB_NET=1 USB_NET_BACKEND=tap TAP_IF=mona0`
+- Grant QEMU capabilities (system-wide change): `sudo setcap cap_net_admin+ep $(command -v qemu-system-aarch64)`
+
+### Note on “getting packets to/from the outside”
+
+Creating a TAP only gives you a host L2 interface. To reach the wider network you typically bridge it (or route/NAT) and/or run a router advertisement daemon on the host.

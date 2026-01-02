@@ -58,6 +58,15 @@ void proc_clear(proc_t *p) {
     p->pending_read_len = 0;
     p->pending_read_fd = 0;
 
+    p->pending_udp6_recv = 0;
+    p->pending_udp6_sock_id = 0;
+    p->pending_udp6_fd = 0;
+    p->pending_udp6_buf_user = 0;
+    p->pending_udp6_len = 0;
+    p->pending_udp6_src_ip_user = 0;
+    p->pending_udp6_src_port_user = 0;
+    p->pending_udp6_ret = 0;
+
     p->pending_ping6 = 0;
     p->ping6_done = 0;
     p->ping6_ident = 0;

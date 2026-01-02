@@ -377,6 +377,27 @@ uint64_t exception_handle(trap_frame_t *tf,
             }
             break;
 
+        case __NR_mona_udp6_socket:
+            ret = sys_mona_udp6_socket();
+            break;
+
+        case __NR_mona_udp6_bind:
+            ret = sys_mona_udp6_bind(a0, a1);
+            break;
+
+        case __NR_mona_udp6_sendto:
+            ret = sys_mona_udp6_sendto(a0, a1, a2, a3, a4);
+            break;
+
+        case __NR_mona_udp6_recvfrom:
+            ret = sys_mona_udp6_recvfrom(tf, a0, a1, a2, a3, a4, a5, elr);
+            if (ret == SYSCALL_SWITCHED) {
+                /* sys_mona_udp6_recvfrom already switched contexts. */
+                tf_copy(&g_procs[g_cur_proc].tf, tf);
+                return 1;
+            }
+            break;
+
         case __NR_exit:
         case __NR_exit_group:
             proc_trace("exit", g_procs[g_cur_proc].pid, a0);

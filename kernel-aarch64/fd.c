@@ -1,5 +1,6 @@
 #include "fd.h"
 
+#include "net_udp6.h"
 #include "pipe.h"
 
 /* errno values (match exceptions.c) */
@@ -29,6 +30,8 @@ void desc_clear(file_desc_t *d) {
     d->u.proc.node = 0;
     d->u.proc._pad = 0;
     d->u.proc.off = 0;
+    d->u.udp6.sock_id = 0;
+    d->u.udp6._pad = 0;
 }
 
 void fd_init(void) {
@@ -58,6 +61,10 @@ void desc_incref(int didx) {
     if (d->kind == FDESC_PIPE) {
         pipe_on_desc_incref(d->u.pipe.pipe_id, d->u.pipe.end);
     }
+
+    if (d->kind == FDESC_UDP6) {
+        net_udp6_on_desc_incref(d->u.udp6.sock_id);
+    }
 }
 
 void desc_decref(int didx) {
@@ -67,6 +74,10 @@ void desc_decref(int didx) {
 
     if (d->kind == FDESC_PIPE) {
         pipe_on_desc_decref(d->u.pipe.pipe_id, d->u.pipe.end);
+    }
+
+    if (d->kind == FDESC_UDP6) {
+        net_udp6_on_desc_decref(d->u.udp6.sock_id);
     }
 
     d->refs--;

@@ -62,3 +62,20 @@ uint64_t sys_mona_ping6(trap_frame_t *tf,
 						uint64_t timeout_ms,
 						uint64_t rtt_ns_user,
 						uint64_t elr);
+
+/* mona-specific: minimal UDP-over-IPv6 support. */
+uint64_t sys_mona_udp6_socket(void);
+uint64_t sys_mona_udp6_bind(uint64_t fd, uint64_t port);
+uint64_t sys_mona_udp6_sendto(uint64_t fd,
+							  uint64_t dst_ip_user,
+							  uint64_t dst_port,
+							  uint64_t buf_user,
+							  uint64_t len);
+uint64_t sys_mona_udp6_recvfrom(trap_frame_t *tf,
+								uint64_t fd,
+								uint64_t buf_user,
+								uint64_t len,
+								uint64_t src_ip_user,
+								uint64_t src_port_user,
+								uint64_t timeout_ms,
+								uint64_t elr);

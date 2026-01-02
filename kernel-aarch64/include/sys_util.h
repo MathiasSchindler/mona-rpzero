@@ -27,6 +27,7 @@ int copy_cstr_from_user(char *dst, uint64_t dstsz, uint64_t user_ptr);
 int read_u64_from_user(uint64_t user_ptr, uint64_t *out);
 int write_bytes_to_user(uint64_t user_dst, const void *src, uint64_t len);
 int write_u64_to_user(uint64_t user_dst, uint64_t v);
+int write_u16_to_user(uint64_t user_dst, uint16_t v);
 
 uint64_t align_down_u64(uint64_t x, uint64_t a);
 uint64_t align_up_u64(uint64_t x, uint64_t a);

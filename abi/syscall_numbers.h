@@ -57,3 +57,9 @@
  */
 #define __NR_mona_dmesg    4096ull
 #define __NR_mona_ping6    4097ull
+
+/* mona-specific: minimal UDP-over-IPv6 support. */
+#define __NR_mona_udp6_socket   4098ull
+#define __NR_mona_udp6_bind     4099ull
+#define __NR_mona_udp6_sendto   4100ull
+#define __NR_mona_udp6_recvfrom 4101ull

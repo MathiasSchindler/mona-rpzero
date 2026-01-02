@@ -52,6 +52,16 @@ typedef struct {
     uint64_t pending_read_len;
     uint64_t pending_read_fd;
 
+    /* Pending mona-specific UDP6 recvfrom syscall. */
+    uint8_t pending_udp6_recv;
+    uint32_t pending_udp6_sock_id;
+    uint64_t pending_udp6_fd;
+    uint64_t pending_udp6_buf_user;
+    uint64_t pending_udp6_len;
+    uint64_t pending_udp6_src_ip_user;
+    uint64_t pending_udp6_src_port_user;
+    uint64_t pending_udp6_ret;
+
     /* Pending mona-specific ping6 syscall. */
     uint8_t pending_ping6;
     uint8_t ping6_done;

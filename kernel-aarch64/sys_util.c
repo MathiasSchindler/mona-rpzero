@@ -207,6 +207,12 @@ int write_u64_to_user(uint64_t user_dst, uint64_t v) {
     return 0;
 }
 
+int write_u16_to_user(uint64_t user_dst, uint16_t v) {
+    if (!user_range_ok(user_dst, 2)) return -1;
+    *(volatile uint16_t *)(uintptr_t)user_dst = v;
+    return 0;
+}
+
 uint64_t align_down_u64(uint64_t x, uint64_t a) {
     return x & ~(a - 1u);
 }
