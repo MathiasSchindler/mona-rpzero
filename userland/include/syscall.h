@@ -327,6 +327,31 @@ static inline uint64_t sys_mona_net6_get_dns(uint8_t out_ip[16]) {
     return __syscall1(__NR_mona_net6_get_dns, (uint64_t)(uintptr_t)out_ip);
 }
 
+/* mona-specific: minimal TCP-over-IPv6 client support.
+ *
+ * NOTE: This is intentionally not a POSIX socket API.
+ */
+static inline uint64_t sys_mona_tcp6_connect(const uint8_t dst_ip[16],
+                                             uint64_t dst_port,
+                                             uint64_t timeout_ms) {
+    return __syscall3(__NR_mona_tcp6_connect,
+                      (uint64_t)(uintptr_t)dst_ip,
+                      dst_port,
+                      timeout_ms);
+}
+
+static inline uint64_t sys_mona_tcp6_send(uint64_t fd, const void *buf, uint64_t len) {
+    return __syscall3_p(__NR_mona_tcp6_send, fd, (void *)buf, len);
+}
+
+static inline uint64_t sys_mona_tcp6_recv(uint64_t fd, void *buf, uint64_t len, uint64_t timeout_ms) {
+    return __syscall4(__NR_mona_tcp6_recv,
+                      fd,
+                      (uint64_t)(uintptr_t)buf,
+                      len,
+                      timeout_ms);
+}
+
 __attribute__((noreturn)) static inline void sys_exit_group(uint64_t status) {
     (void)__syscall1(__NR_exit_group, status);
     for (;;) { }

@@ -1,5 +1,6 @@
 #include "fd.h"
 
+#include "net_tcp6.h"
 #include "net_udp6.h"
 #include "pipe.h"
 
@@ -32,6 +33,8 @@ void desc_clear(file_desc_t *d) {
     d->u.proc.off = 0;
     d->u.udp6.sock_id = 0;
     d->u.udp6._pad = 0;
+    d->u.tcp6.conn_id = 0;
+    d->u.tcp6._pad = 0;
 }
 
 void fd_init(void) {
@@ -65,6 +68,10 @@ void desc_incref(int didx) {
     if (d->kind == FDESC_UDP6) {
         net_udp6_on_desc_incref(d->u.udp6.sock_id);
     }
+
+    if (d->kind == FDESC_TCP6) {
+        net_tcp6_on_desc_incref(d->u.tcp6.conn_id);
+    }
 }
 
 void desc_decref(int didx) {
@@ -78,6 +85,10 @@ void desc_decref(int didx) {
 
     if (d->kind == FDESC_UDP6) {
         net_udp6_on_desc_decref(d->u.udp6.sock_id);
+    }
+
+    if (d->kind == FDESC_TCP6) {
+        net_tcp6_on_desc_decref(d->u.tcp6.conn_id);
     }
 
     d->refs--;

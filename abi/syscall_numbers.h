@@ -66,3 +66,8 @@
 
 /* mona-specific: query IPv6 Recursive DNS Server (RDNSS) learned via RA. */
 #define __NR_mona_net6_get_dns  4102ull
+
+/* mona-specific: minimal TCP-over-IPv6 client support (connect/send/recv). */
+#define __NR_mona_tcp6_connect  4103ull
+#define __NR_mona_tcp6_send     4104ull
+#define __NR_mona_tcp6_recv     4105ull

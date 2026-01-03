@@ -1,6 +1,7 @@
 #include "net_ipv6.h"
 
 #include "errno.h"
+#include "net_tcp6.h"
 #include "net_udp6.h"
 #include "proc.h"
 #include "time.h"
@@ -11,6 +12,10 @@
 #else
 #define IPV6_DEBUG_RX 0
 #endif
+
+#define IPV6_NH_ICMPV6 58u
+#define IPV6_NH_UDP 17u
+#define IPV6_NH_TCP 6u
 
 /*
  * Minimal IPv6/ICMPv6/NDP implementation aimed at enabling a first ping6.
@@ -121,6 +126,24 @@ static uint16_t udp6_checksum(const uint8_t src_ip[16], const uint8_t dst_ip[16]
     return csum_finish(sum);
 }
 
+static uint16_t tcp6_checksum(const uint8_t src_ip[16], const uint8_t dst_ip[16],
+                              const uint8_t *tcp, size_t tcp_len) {
+    uint32_t sum = 0;
+
+    sum = csum_add_buf(sum, src_ip, 16);
+    sum = csum_add_buf(sum, dst_ip, 16);
+
+    uint8_t len_be[4];
+    be32_store(len_be, (uint32_t)tcp_len);
+    sum = csum_add_buf(sum, len_be, 4);
+
+    uint8_t nh[4] = {0, 0, 0, (uint8_t)IPV6_NH_TCP};
+    sum = csum_add_buf(sum, nh, 4);
+
+    sum = csum_add_buf(sum, tcp, tcp_len);
+    return csum_finish(sum);
+}
+
 /* Ethernet framing for IPv6. */
 
 typedef struct __attribute__((packed)) {
@@ -161,9 +184,6 @@ typedef struct __attribute__((packed)) {
     uint8_t src[16];
     uint8_t dst[16];
 } ipv6_hdr_t;
-
-#define IPV6_NH_ICMPV6 58u
-#define IPV6_NH_UDP 17u
 
 static int ipv6_is_multicast(const uint8_t ip[16]) {
     return ip[0] == 0xff;
@@ -972,6 +992,576 @@ void net_ipv6_init(void) {
     g_ping_phase = 0;
 
     net_udp6_init();
+    net_tcp6_init();
+}
+
+/* --- Minimal TCP-over-IPv6 client (Phase 0 for TLS bringup) --- */
+
+enum {
+    TCP6_MAX_CONNS = 8,
+    TCP6_RX_CAP = 8192,
+    TCP6_MSS = 1200,
+};
+
+typedef enum {
+    TCP6_CLOSED = 0,
+    TCP6_SYN_SENT = 1,
+    TCP6_ESTABLISHED = 2,
+    TCP6_CLOSE_WAIT = 3,
+} tcp6_state_t;
+
+typedef struct {
+    uint8_t used;
+    uint8_t state;
+    uint16_t refs;
+
+    uint16_t local_port;
+    uint16_t remote_port;
+    uint8_t remote_ip[16];
+
+    uint32_t iss;
+    uint32_t snd_una;
+    uint32_t snd_nxt;
+
+    uint32_t irs;
+    uint32_t rcv_nxt;
+
+    uint8_t rx[TCP6_RX_CAP];
+    uint32_t rx_head;
+    uint32_t rx_tail;
+    uint32_t rx_count;
+
+    uint64_t last_syn_tx_ns;
+} tcp6_conn_t;
+
+static tcp6_conn_t g_tcp6[TCP6_MAX_CONNS];
+static uint16_t g_tcp6_ephemeral = 40000;
+
+typedef struct __attribute__((packed)) {
+    uint16_t src_port_be;
+    uint16_t dst_port_be;
+    uint32_t seq_be;
+    uint32_t ack_be;
+    uint8_t off_rsv;
+    uint8_t flags;
+    uint16_t window_be;
+    uint16_t csum_be;
+    uint16_t urg_be;
+} tcp_hdr_t;
+
+enum {
+    TCP_FLG_FIN = 0x01,
+    TCP_FLG_SYN = 0x02,
+    TCP_FLG_RST = 0x04,
+    TCP_FLG_PSH = 0x08,
+    TCP_FLG_ACK = 0x10,
+};
+
+static uint16_t tcp6_next_ephemeral_port(void) {
+    for (int tries = 0; tries < 2000; tries++) {
+        uint16_t p = g_tcp6_ephemeral++;
+        if (g_tcp6_ephemeral < 40000) g_tcp6_ephemeral = 40000;
+        if (p == 0) continue;
+
+        int in_use = 0;
+        for (int i = 0; i < (int)(sizeof(g_tcp6) / sizeof(g_tcp6[0])); i++) {
+            if (!g_tcp6[i].used) continue;
+            if (g_tcp6[i].local_port == p) {
+                in_use = 1;
+                break;
+            }
+        }
+        if (!in_use) return p;
+    }
+    return 0;
+}
+
+static tcp6_conn_t *tcp6_get(uint32_t conn_id) {
+    if (conn_id >= (uint32_t)(sizeof(g_tcp6) / sizeof(g_tcp6[0]))) return 0;
+    tcp6_conn_t *c = &g_tcp6[conn_id];
+    if (!c->used) return 0;
+    return c;
+}
+
+void net_tcp6_init(void) {
+    for (uint32_t i = 0; i < (uint32_t)(sizeof(g_tcp6) / sizeof(g_tcp6[0])); i++) {
+        tcp6_conn_t *c = &g_tcp6[i];
+        c->used = 0;
+        c->state = TCP6_CLOSED;
+        c->refs = 0;
+        c->local_port = 0;
+        c->remote_port = 0;
+        for (int k = 0; k < 16; k++) c->remote_ip[k] = 0;
+        c->iss = 0;
+        c->snd_una = 0;
+        c->snd_nxt = 0;
+        c->irs = 0;
+        c->rcv_nxt = 0;
+        c->rx_head = 0;
+        c->rx_tail = 0;
+        c->rx_count = 0;
+        c->last_syn_tx_ns = 0;
+    }
+}
+
+void net_tcp6_on_desc_incref(uint32_t conn_id) {
+    tcp6_conn_t *c = tcp6_get(conn_id);
+    if (!c) return;
+    if (c->refs < 0xffffu) c->refs++;
+}
+
+void net_tcp6_on_desc_decref(uint32_t conn_id) {
+    tcp6_conn_t *c = tcp6_get(conn_id);
+    if (!c) return;
+    if (c->refs == 0) return;
+    c->refs--;
+    if (c->refs == 0) {
+        c->used = 0;
+        c->state = TCP6_CLOSED;
+    }
+}
+
+int net_tcp6_conn_alloc(uint32_t *out_conn_id) {
+    if (!out_conn_id) return -(int)EINVAL;
+    for (uint32_t i = 0; i < (uint32_t)(sizeof(g_tcp6) / sizeof(g_tcp6[0])); i++) {
+        tcp6_conn_t *c = &g_tcp6[i];
+        if (c->used) continue;
+        c->used = 1;
+        c->state = TCP6_CLOSED;
+        c->refs = 1;
+        c->local_port = 0;
+        c->remote_port = 0;
+        for (int k = 0; k < 16; k++) c->remote_ip[k] = 0;
+        c->iss = 0;
+        c->snd_una = 0;
+        c->snd_nxt = 0;
+        c->irs = 0;
+        c->rcv_nxt = 0;
+        c->rx_head = 0;
+        c->rx_tail = 0;
+        c->rx_count = 0;
+        c->last_syn_tx_ns = 0;
+        *out_conn_id = i;
+        return 0;
+    }
+    return -(int)ENOMEM;
+}
+
+static int tcp6_prepare_l2(netif_t *nif, const uint8_t dst_ip[16], uint8_t nh_ip[16], uint8_t dst_mac[6]) {
+    if (!nif || !dst_ip || !nh_ip || !dst_mac) return -(int)EINVAL;
+    if (!nif->ipv6_ll_valid) net_ipv6_configure_netif(nif);
+
+    if (!ipv6_is_linklocal(dst_ip) && !ipv6_is_multicast(dst_ip) && !nif->ipv6_global_valid) {
+        uint64_t now = time_now_ns();
+        if (now != 0) {
+            uint64_t last = nif->ipv6_last_rs_ns;
+            if (last == 0 || now - last >= 250000000ull) {
+                (void)send_router_solicitation(nif);
+                nif->ipv6_last_rs_ns = now;
+            }
+        }
+        return -(int)EAGAIN;
+    }
+
+    if (ipv6_is_multicast(dst_ip)) {
+        ipv6_multicast_to_eth(dst_ip, dst_mac);
+        memcpy_u8(nh_ip, dst_ip, 16);
+        return 0;
+    }
+
+    int rc = ipv6_select_next_hop(nif, dst_ip, nh_ip);
+    if (rc < 0) {
+        if (rc == -(int)ENETUNREACH) return -(int)EAGAIN;
+        return rc;
+    }
+
+    if (nd_lookup_mac(nh_ip, dst_mac) != 0) {
+        (void)send_neighbor_solicitation(nif, nh_ip);
+
+        if (nif->ipv6_router_valid && memeq(nh_ip, dst_ip, 16) &&
+            !ipv6_is_linklocal(dst_ip) && !ipv6_is_multicast(dst_ip)) {
+            uint8_t rmac[6];
+            if (nd_lookup_mac(nif->ipv6_router_ll, rmac) == 0) {
+                memcpy_u8(dst_mac, rmac, 6);
+            } else {
+                (void)send_neighbor_solicitation(nif, nif->ipv6_router_ll);
+                return -(int)EAGAIN;
+            }
+        } else {
+            return -(int)EAGAIN;
+        }
+    }
+
+    return 0;
+}
+
+static int tcp6_send_segment(netif_t *nif,
+                             const uint8_t src_ip[16],
+                             const uint8_t dst_ip[16],
+                             const uint8_t dst_mac[6],
+                             uint16_t src_port,
+                             uint16_t dst_port,
+                             uint32_t seq,
+                             uint32_t ack,
+                             uint8_t flags,
+                             const uint8_t *payload,
+                             size_t payload_len,
+                             int syn_with_mss) {
+    uint8_t pkt[40 + 20 + 16 + TCP6_MSS];
+
+    uint8_t opts[16];
+    size_t opts_len = 0;
+    if (syn_with_mss) {
+        uint16_t mss = (uint16_t)TCP6_MSS;
+        opts[0] = 2;
+        opts[1] = 4;
+        opts[2] = (uint8_t)(mss >> 8);
+        opts[3] = (uint8_t)(mss & 0xff);
+        opts_len = 4;
+    }
+
+    size_t tcp_len = sizeof(tcp_hdr_t) + opts_len + payload_len;
+    size_t total_len = sizeof(ipv6_hdr_t) + tcp_len;
+    if (total_len > sizeof(pkt)) return -(int)EMSGSIZE;
+
+    ipv6_hdr_t *ip6 = (ipv6_hdr_t *)pkt;
+    be32_store((uint8_t *)&ip6->vtcfl_be, 0x60000000u);
+    be16_store((uint8_t *)&ip6->payload_len_be, (uint16_t)tcp_len);
+    ip6->next_header = (uint8_t)IPV6_NH_TCP;
+    ip6->hop_limit = 64;
+    memcpy_u8(ip6->src, src_ip, 16);
+    memcpy_u8(ip6->dst, dst_ip, 16);
+
+    tcp_hdr_t *th = (tcp_hdr_t *)(pkt + sizeof(ipv6_hdr_t));
+    be16_store((uint8_t *)&th->src_port_be, src_port);
+    be16_store((uint8_t *)&th->dst_port_be, dst_port);
+    be32_store((uint8_t *)&th->seq_be, seq);
+    be32_store((uint8_t *)&th->ack_be, ack);
+    th->off_rsv = (uint8_t)(((uint8_t)((sizeof(tcp_hdr_t) + opts_len) / 4u) & 0x0fu) << 4);
+    th->flags = flags;
+
+    uint16_t win = 4096;
+    be16_store((uint8_t *)&th->window_be, win);
+    th->csum_be = 0;
+    th->urg_be = 0;
+
+    uint8_t *p = (uint8_t *)th + sizeof(tcp_hdr_t);
+    if (opts_len) {
+        memcpy_u8(p, opts, opts_len);
+        p += opts_len;
+    }
+    if (payload_len) {
+        memcpy_u8(p, payload, payload_len);
+    }
+
+    uint16_t csum = tcp6_checksum(ip6->src, ip6->dst, (const uint8_t *)th, tcp_len);
+    th->csum_be = (uint16_t)((csum >> 8) | (csum << 8));
+
+    return eth_send_ipv6(nif, dst_mac, pkt, total_len);
+}
+
+int net_tcp6_connect_start(uint32_t conn_id, const uint8_t dst_ip[16], uint16_t dst_port) {
+    if (!dst_ip) return -(int)EINVAL;
+    if (dst_port == 0) return -(int)EINVAL;
+
+    tcp6_conn_t *c = tcp6_get(conn_id);
+    if (!c) return -(int)EBADF;
+    if (c->state == TCP6_ESTABLISHED) return 0;
+
+    netif_t *nif = netif_get(0);
+    if (!nif) return -(int)ENODEV;
+
+    if (c->state == TCP6_CLOSED) {
+        c->local_port = tcp6_next_ephemeral_port();
+        if (c->local_port == 0) return -(int)EADDRINUSE;
+        c->remote_port = dst_port;
+        memcpy_u8(c->remote_ip, dst_ip, 16);
+
+        uint64_t t = time_now_ns();
+        c->iss = (uint32_t)(t ^ (t >> 32) ^ ((uint64_t)conn_id << 16));
+        c->snd_una = c->iss;
+        c->snd_nxt = c->iss + 1u;
+        c->irs = 0;
+        c->rcv_nxt = 0;
+        c->rx_head = 0;
+        c->rx_tail = 0;
+        c->rx_count = 0;
+        c->last_syn_tx_ns = 0;
+        c->state = TCP6_SYN_SENT;
+    }
+
+    if (c->state != TCP6_SYN_SENT) return -(int)EINVAL;
+
+    uint64_t now = time_now_ns();
+    if (c->last_syn_tx_ns != 0 && now != 0 && now - c->last_syn_tx_ns < 200000000ull) {
+        return 0;
+    }
+
+    uint8_t nh_ip[16];
+    uint8_t dst_mac[6];
+    int prc = tcp6_prepare_l2(nif, c->remote_ip, nh_ip, dst_mac);
+    if (prc < 0) return prc;
+
+    const uint8_t *src_ip = ipv6_select_src_ip(nif, c->remote_ip);
+    if (!src_ip) return -(int)EAGAIN;
+
+    int rc = tcp6_send_segment(nif,
+                               src_ip,
+                               c->remote_ip,
+                               dst_mac,
+                               c->local_port,
+                               c->remote_port,
+                               c->iss,
+                               0,
+                               TCP_FLG_SYN,
+                               0,
+                               0,
+                               1);
+    if (rc == 0) {
+        c->last_syn_tx_ns = now;
+        return 0;
+    }
+    return rc;
+}
+
+int net_tcp6_is_established(uint32_t conn_id) {
+    tcp6_conn_t *c = tcp6_get(conn_id);
+    if (!c) return 0;
+    return (c->state == TCP6_ESTABLISHED) ? 1 : 0;
+}
+
+int net_tcp6_send(uint32_t conn_id, const uint8_t *buf, size_t len) {
+    if (!buf && len != 0) return -(int)EINVAL;
+    tcp6_conn_t *c = tcp6_get(conn_id);
+    if (!c) return -(int)EBADF;
+    if (c->state != TCP6_ESTABLISHED && c->state != TCP6_CLOSE_WAIT) return -(int)ENOTCONN;
+
+    netif_t *nif = netif_get(0);
+    if (!nif) return -(int)ENODEV;
+
+    uint8_t nh_ip[16];
+    uint8_t dst_mac[6];
+    int prc = tcp6_prepare_l2(nif, c->remote_ip, nh_ip, dst_mac);
+    if (prc < 0) return prc;
+
+    const uint8_t *src_ip = ipv6_select_src_ip(nif, c->remote_ip);
+    if (!src_ip) return -(int)EAGAIN;
+
+    size_t sent = 0;
+    while (sent < len) {
+        size_t chunk = len - sent;
+        if (chunk > (size_t)TCP6_MSS) chunk = (size_t)TCP6_MSS;
+
+        int rc = tcp6_send_segment(nif,
+                                   src_ip,
+                                   c->remote_ip,
+                                   dst_mac,
+                                   c->local_port,
+                                   c->remote_port,
+                                   c->snd_nxt,
+                                   c->rcv_nxt,
+                                   (uint8_t)(TCP_FLG_ACK | TCP_FLG_PSH),
+                                   buf + sent,
+                                   chunk,
+                                   0);
+        if (rc < 0) return rc;
+        c->snd_nxt += (uint32_t)chunk;
+        sent += chunk;
+    }
+    return (int)sent;
+}
+
+int net_tcp6_try_recv(uint32_t conn_id, uint8_t *buf, size_t len) {
+    if (!buf && len != 0) return -(int)EINVAL;
+    tcp6_conn_t *c = tcp6_get(conn_id);
+    if (!c) return -(int)EBADF;
+
+    if (c->rx_count == 0) {
+        if (c->state == TCP6_CLOSE_WAIT) return 0;
+        return -(int)EAGAIN;
+    }
+    if (len == 0) return 0;
+
+    uint32_t n = c->rx_count;
+    if (n > (uint32_t)len) n = (uint32_t)len;
+
+    for (uint32_t i = 0; i < n; i++) {
+        buf[i] = c->rx[c->rx_head];
+        c->rx_head = (c->rx_head + 1u) % (uint32_t)TCP6_RX_CAP;
+    }
+    c->rx_count -= n;
+    return (int)n;
+}
+
+static tcp6_conn_t *tcp6_find_incoming(const uint8_t src_ip[16], uint16_t src_port, uint16_t dst_port) {
+    for (uint32_t i = 0; i < (uint32_t)(sizeof(g_tcp6) / sizeof(g_tcp6[0])); i++) {
+        tcp6_conn_t *c = &g_tcp6[i];
+        if (!c->used) continue;
+        if (c->local_port != dst_port) continue;
+        if (c->remote_port != src_port) continue;
+        if (!memeq(c->remote_ip, src_ip, 16)) continue;
+        return c;
+    }
+    return 0;
+}
+
+static void tcp6_input(netif_t *nif, const uint8_t src_mac[6], const ipv6_hdr_t *ip6, const uint8_t *payload, size_t pl_len) {
+    if (!nif || !src_mac || !ip6 || !payload) return;
+    if (pl_len < sizeof(tcp_hdr_t)) return;
+
+    int dst_ok = memeq(ip6->dst, nif->ipv6_ll, 16) || (nif->ipv6_global_valid && memeq(ip6->dst, nif->ipv6_global, 16));
+    if (!dst_ok) return;
+
+    const tcp_hdr_t *th = (const tcp_hdr_t *)payload;
+    uint16_t src_port = be16_load((const uint8_t *)&th->src_port_be);
+    uint16_t dst_port = be16_load((const uint8_t *)&th->dst_port_be);
+
+    tcp6_conn_t *c = tcp6_find_incoming(ip6->src, src_port, dst_port);
+    if (!c) return;
+
+    uint32_t seq = be32_load((const uint8_t *)&th->seq_be);
+    uint32_t ack = be32_load((const uint8_t *)&th->ack_be);
+    uint8_t off = (uint8_t)(th->off_rsv >> 4);
+    size_t hdr_len = (size_t)off * 4u;
+    if (hdr_len < sizeof(tcp_hdr_t) || hdr_len > pl_len) return;
+
+    size_t data_len = pl_len - hdr_len;
+    const uint8_t *data = payload + hdr_len;
+
+    uint16_t got_csum = (uint16_t)((th->csum_be >> 8) | (th->csum_be << 8));
+    if (got_csum != 0) {
+        uint8_t tmp[sizeof(tcp_hdr_t) + 16 + TCP6_MSS];
+        if (pl_len <= sizeof(tmp)) {
+            memcpy_u8(tmp, payload, pl_len);
+            ((tcp_hdr_t *)tmp)->csum_be = 0;
+            uint16_t exp = tcp6_checksum(ip6->src, ip6->dst, tmp, pl_len);
+            if (exp != got_csum) {
+                return;
+            }
+        }
+    }
+
+    nd_update(ip6->src, src_mac);
+
+    if (c->state == TCP6_SYN_SENT) {
+        if ((th->flags & (TCP_FLG_SYN | TCP_FLG_ACK)) == (TCP_FLG_SYN | TCP_FLG_ACK)) {
+            if (ack == c->snd_nxt) {
+                c->irs = seq;
+                c->rcv_nxt = seq + 1u;
+                c->snd_una = ack;
+                c->state = TCP6_ESTABLISHED;
+
+                uint8_t nh_ip[16];
+                uint8_t dst_mac[6];
+                if (tcp6_prepare_l2(nif, c->remote_ip, nh_ip, dst_mac) == 0) {
+                    const uint8_t *src_ip = ipv6_select_src_ip(nif, c->remote_ip);
+                    if (src_ip) {
+                        (void)tcp6_send_segment(nif,
+                                                src_ip,
+                                                c->remote_ip,
+                                                dst_mac,
+                                                c->local_port,
+                                                c->remote_port,
+                                                c->snd_nxt,
+                                                c->rcv_nxt,
+                                                TCP_FLG_ACK,
+                                                0,
+                                                0,
+                                                0);
+                    }
+                }
+            }
+        }
+        return;
+    }
+
+    if (c->state != TCP6_ESTABLISHED && c->state != TCP6_CLOSE_WAIT) return;
+
+    if (th->flags & TCP_FLG_ACK) {
+        if (ack > c->snd_una) c->snd_una = ack;
+    }
+
+    if (th->flags & TCP_FLG_FIN) {
+        if (seq == c->rcv_nxt) {
+            c->rcv_nxt += 1u;
+            c->state = TCP6_CLOSE_WAIT;
+        }
+
+        uint8_t nh_ip[16];
+        uint8_t dst_mac[6];
+        if (tcp6_prepare_l2(nif, c->remote_ip, nh_ip, dst_mac) == 0) {
+            const uint8_t *src_ip = ipv6_select_src_ip(nif, c->remote_ip);
+            if (src_ip) {
+                (void)tcp6_send_segment(nif,
+                                        src_ip,
+                                        c->remote_ip,
+                                        dst_mac,
+                                        c->local_port,
+                                        c->remote_port,
+                                        c->snd_nxt,
+                                        c->rcv_nxt,
+                                        TCP_FLG_ACK,
+                                        0,
+                                        0,
+                                        0);
+            }
+        }
+        return;
+    }
+
+    if (data_len == 0) return;
+
+    if (seq != c->rcv_nxt) {
+        uint8_t nh_ip[16];
+        uint8_t dst_mac[6];
+        if (tcp6_prepare_l2(nif, c->remote_ip, nh_ip, dst_mac) == 0) {
+            const uint8_t *src_ip = ipv6_select_src_ip(nif, c->remote_ip);
+            if (src_ip) {
+                (void)tcp6_send_segment(nif,
+                                        src_ip,
+                                        c->remote_ip,
+                                        dst_mac,
+                                        c->local_port,
+                                        c->remote_port,
+                                        c->snd_nxt,
+                                        c->rcv_nxt,
+                                        TCP_FLG_ACK,
+                                        0,
+                                        0,
+                                        0);
+            }
+        }
+        return;
+    }
+
+    uint32_t space = (uint32_t)TCP6_RX_CAP - c->rx_count;
+    uint32_t to_copy = (data_len > (size_t)space) ? space : (uint32_t)data_len;
+    for (uint32_t i = 0; i < to_copy; i++) {
+        c->rx[c->rx_tail] = data[i];
+        c->rx_tail = (c->rx_tail + 1u) % (uint32_t)TCP6_RX_CAP;
+    }
+    c->rx_count += to_copy;
+    c->rcv_nxt += to_copy;
+
+    uint8_t nh_ip[16];
+    uint8_t dst_mac[6];
+    if (tcp6_prepare_l2(nif, c->remote_ip, nh_ip, dst_mac) == 0) {
+        const uint8_t *src_ip = ipv6_select_src_ip(nif, c->remote_ip);
+        if (src_ip) {
+            (void)tcp6_send_segment(nif,
+                                    src_ip,
+                                    c->remote_ip,
+                                    dst_mac,
+                                    c->local_port,
+                                    c->remote_port,
+                                    c->snd_nxt,
+                                    c->rcv_nxt,
+                                    TCP_FLG_ACK,
+                                    0,
+                                    0,
+                                    0);
+        }
+    }
 }
 
 void net_ipv6_configure_netif(netif_t *nif) {
@@ -1223,6 +1813,11 @@ void net_ipv6_input(netif_t *nif, const uint8_t src_mac[6], const uint8_t *pkt, 
         size_t udp_payload_len = (size_t)udp_len - sizeof(udp_hdr_t);
         udp6_deliver(ip6->src, src_port, ip6->dst, dst_port, udp_payload, udp_payload_len);
         g_ipv6_dbg.rx_udp_delivered++;
+        return;
+    }
+
+    if (next_header == IPV6_NH_TCP) {
+        tcp6_input(nif, src_mac, ip6, payload, pl_len);
         return;
     }
 

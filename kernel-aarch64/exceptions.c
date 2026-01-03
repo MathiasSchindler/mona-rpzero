@@ -402,6 +402,18 @@ uint64_t exception_handle(trap_frame_t *tf,
             ret = sys_mona_net6_get_dns(a0);
             break;
 
+        case __NR_mona_tcp6_connect:
+            ret = sys_mona_tcp6_connect(tf, a0, a1, a2, elr);
+            break;
+
+        case __NR_mona_tcp6_send:
+            ret = sys_mona_tcp6_send(a0, a1, a2);
+            break;
+
+        case __NR_mona_tcp6_recv:
+            ret = sys_mona_tcp6_recv(a0, a1, a2, a3);
+            break;
+
         case __NR_exit:
         case __NR_exit_group:
             proc_trace("exit", g_procs[g_cur_proc].pid, a0);

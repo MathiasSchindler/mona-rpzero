@@ -82,3 +82,12 @@ uint64_t sys_mona_udp6_recvfrom(trap_frame_t *tf,
 
 /* mona-specific: read IPv6 DNS server (RDNSS) learned from RA into a 16-byte buffer. */
 uint64_t sys_mona_net6_get_dns(uint64_t out_ip_user);
+
+/* mona-specific: minimal TCP-over-IPv6 client support. */
+uint64_t sys_mona_tcp6_connect(trap_frame_t *tf,
+							  uint64_t dst_ip_user,
+							  uint64_t dst_port,
+							  uint64_t timeout_ms,
+							  uint64_t elr);
+uint64_t sys_mona_tcp6_send(uint64_t fd, uint64_t buf_user, uint64_t len);
+uint64_t sys_mona_tcp6_recv(uint64_t fd, uint64_t buf_user, uint64_t len, uint64_t timeout_ms);

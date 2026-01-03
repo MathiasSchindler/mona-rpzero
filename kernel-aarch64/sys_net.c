@@ -4,6 +4,7 @@
 #include "fd.h"
 #include "net.h"
 #include "net_ipv6.h"
+#include "net_tcp6.h"
 #include "net_udp6.h"
 #include "proc.h"
 #include "sched.h"
@@ -33,6 +34,16 @@ static int get_udp6_sock_id_from_fd(proc_t *p, uint64_t fd, uint32_t *out_sock_i
     file_desc_t *d = &g_descs[didx];
     if (d->kind != FDESC_UDP6) return -(int)EBADF;
     *out_sock_id = d->u.udp6.sock_id;
+    return 0;
+}
+
+static int get_tcp6_conn_id_from_fd(proc_t *p, uint64_t fd, uint32_t *out_conn_id) {
+    if (!p || !out_conn_id) return -(int)EINVAL;
+    int didx = fd_get_desc_idx(&p->fdt, fd);
+    if (didx < 0) return -(int)EBADF;
+    file_desc_t *d = &g_descs[didx];
+    if (d->kind != FDESC_TCP6) return -(int)EBADF;
+    *out_conn_id = d->u.tcp6.conn_id;
     return 0;
 }
 
@@ -414,4 +425,166 @@ uint64_t sys_mona_net6_get_dns(uint64_t out_ip_user) {
     }
 
     return 0;
+}
+
+uint64_t sys_mona_tcp6_connect(trap_frame_t *tf,
+                              uint64_t dst_ip_user,
+                              uint64_t dst_port,
+                              uint64_t timeout_ms,
+                              uint64_t elr) {
+    (void)elr;
+    (void)tf;
+
+    proc_t *cur = &g_procs[g_cur_proc];
+
+    if (dst_port == 0 || dst_port > 65535ull) {
+        return (uint64_t)(-(int64_t)EINVAL);
+    }
+
+    uint8_t dst_ip[16];
+    if (read_bytes_from_user(dst_ip, sizeof(dst_ip), dst_ip_user) != 0) {
+        return (uint64_t)(-(int64_t)EFAULT);
+    }
+
+    /* Allocate a connection and a file descriptor up front, so send/recv can use it. */
+    uint32_t conn_id = 0;
+    int rc = net_tcp6_conn_alloc(&conn_id);
+    if (rc < 0) return (uint64_t)(int64_t)rc;
+
+    int didx = desc_alloc();
+    if (didx < 0) {
+        net_tcp6_on_desc_decref(conn_id);
+        return (uint64_t)(-(int64_t)EMFILE);
+    }
+
+    desc_clear(&g_descs[didx]);
+    g_descs[didx].kind = FDESC_TCP6;
+    g_descs[didx].refs = 1;
+    g_descs[didx].u.tcp6.conn_id = conn_id;
+
+    int fd = fd_alloc_into(&cur->fdt, 0, didx);
+    /* fd_alloc_into() increments refs; drop our creation ref. */
+    desc_decref(didx);
+
+    if (fd < 0) {
+        return (uint64_t)(-(int64_t)EMFILE);
+    }
+
+    uint64_t start_ns = time_now_ns();
+    uint64_t deadline_ns = 0;
+    if (timeout_ms != 0) {
+        uint64_t timeout_ns = timeout_ms * 1000000ull;
+        uint64_t d = start_ns + timeout_ns;
+        if (d < start_ns) d = 0xFFFFFFFFFFFFFFFFull;
+        deadline_ns = d;
+        /* If time isn't available, treat as blocking. */
+        if (start_ns == 0) deadline_ns = 0;
+    }
+
+    for (;;) {
+        if (net_tcp6_is_established(conn_id)) {
+            return (uint64_t)fd;
+        }
+
+        int trc = net_tcp6_connect_start(conn_id, dst_ip, (uint16_t)dst_port);
+        if (trc < 0 && trc != -(int)EAGAIN) {
+            fd_close(&cur->fdt, (uint64_t)fd);
+            return (uint64_t)(int64_t)trc;
+        }
+
+#if defined(ENABLE_USB_KBD) || defined(ENABLE_USB_NET)
+        usb_poll();
+#endif
+
+        if (deadline_ns != 0) {
+            uint64_t now = time_now_ns();
+            if (now != 0 && now >= deadline_ns) {
+                fd_close(&cur->fdt, (uint64_t)fd);
+                return (uint64_t)(-(int64_t)ETIMEDOUT);
+            }
+        }
+    }
+}
+
+uint64_t sys_mona_tcp6_send(uint64_t fd, uint64_t buf_user, uint64_t len) {
+    proc_t *cur = &g_procs[g_cur_proc];
+
+    if (len != 0 && !user_range_ok(buf_user, len)) {
+        return (uint64_t)(-(int64_t)EFAULT);
+    }
+
+    uint32_t conn_id = 0;
+    int rc = get_tcp6_conn_id_from_fd(cur, fd, &conn_id);
+    if (rc < 0) return (uint64_t)(int64_t)rc;
+
+    enum { TCP6_MSS_LOCAL = 1200 };
+    uint8_t tmp[TCP6_MSS_LOCAL];
+    uint64_t off = 0;
+    while (off < len) {
+        uint64_t chunk = len - off;
+        if (chunk > (uint64_t)sizeof(tmp)) chunk = (uint64_t)sizeof(tmp);
+        if (chunk != 0) {
+            if (read_bytes_from_user(tmp, chunk, buf_user + off) != 0) {
+                return (uint64_t)(-(int64_t)EFAULT);
+            }
+        }
+        int trc = net_tcp6_send(conn_id, tmp, (size_t)chunk);
+        if (trc < 0) return (uint64_t)(int64_t)trc;
+        off += (uint64_t)trc;
+        if ((uint64_t)trc != chunk) break;
+    }
+    return off;
+}
+
+uint64_t sys_mona_tcp6_recv(uint64_t fd, uint64_t buf_user, uint64_t len, uint64_t timeout_ms) {
+    proc_t *cur = &g_procs[g_cur_proc];
+
+    if (len != 0 && !user_range_ok(buf_user, len)) {
+        return (uint64_t)(-(int64_t)EFAULT);
+    }
+
+    uint32_t conn_id = 0;
+    int rc = get_tcp6_conn_id_from_fd(cur, fd, &conn_id);
+    if (rc < 0) return (uint64_t)(int64_t)rc;
+
+    uint64_t start_ns = time_now_ns();
+    uint64_t deadline_ns = 0;
+    if (timeout_ms != 0) {
+        uint64_t timeout_ns = timeout_ms * 1000000ull;
+        uint64_t d = start_ns + timeout_ns;
+        if (d < start_ns) d = 0xFFFFFFFFFFFFFFFFull;
+        deadline_ns = d;
+        if (start_ns == 0) deadline_ns = 0;
+    }
+
+    uint8_t tmp[2048];
+    for (;;) {
+        size_t want = (size_t)len;
+        if (want > sizeof(tmp)) want = sizeof(tmp);
+
+        int trc = net_tcp6_try_recv(conn_id, tmp, want);
+        if (trc >= 0) {
+            if (trc != 0) {
+                if (write_bytes_to_user(buf_user, tmp, (uint64_t)trc) != 0) {
+                    return (uint64_t)(-(int64_t)EFAULT);
+                }
+            }
+            return (uint64_t)trc;
+        }
+
+        if (trc != -(int)EAGAIN) {
+            return (uint64_t)(int64_t)trc;
+        }
+
+#if defined(ENABLE_USB_KBD) || defined(ENABLE_USB_NET)
+        usb_poll();
+#endif
+
+        if (deadline_ns != 0) {
+            uint64_t now = time_now_ns();
+            if (now != 0 && now >= deadline_ns) {
+                return (uint64_t)(-(int64_t)ETIMEDOUT);
+            }
+        }
+    }
 }

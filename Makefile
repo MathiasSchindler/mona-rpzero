@@ -85,7 +85,7 @@ NAT66 ?= 1
 DNS_SERVERS ?= [2001:4860:4860::8888],[2001:4860:4860::8844]
 
 
-.PHONY: all run test test-net6 clean help
+.PHONY: all run test test-net6 test-tcp6-wikipedia clean help
 .PHONY: test-net6-hostping
 .PHONY: aarch64-kernel test-aarch64 userland
 
@@ -208,6 +208,19 @@ test-net6-hostping: userland
 	if [[ "$(IPV6_DEBUG_RX)" == "1" ]]; then kdefs+=" -DENABLE_IPV6_DEBUG_RX"; fi; \
 	$(MAKE) -C "$(AARCH64_DIR)" CROSS="$(AARCH64_CROSS)" USERPROG=net6test KERNEL_DEFS="$$kdefs" all
 	@DTB="$(DTB)" MEM="$(MEM)" KERNEL_IMG="$(AARCH64_IMG)" TAP_IF="$(TAP_IF)" TEST_TIMEOUT_S="$(TEST_TIMEOUT_S)" tools/test-net6-hostping.sh "$(TAP_IF)"
+
+test-tcp6-wikipedia: userland
+	@echo "Starting QEMU (raspi3b) Phase 0 test: DNS + TCP6 connect to de.wikipedia.org:443 (TAP + NAT66)"
+	@if [[ -z "$(DTB)" ]]; then \
+		echo "No DTB found. Put one into out/ or archive/, or pass DTB=..." >&2; \
+		echo "Tried: $(DTB_CANDIDATES)" >&2; \
+		exit 2; \
+	fi
+	@kdefs="-DQEMU_SEMIHOSTING -DENABLE_USB_NET"; \
+	if [[ "$(USB_NET_DEBUG)" == "1" ]]; then kdefs+=" -DENABLE_USB_NET_DEBUG"; fi; \
+	if [[ "$(IPV6_DEBUG_RX)" == "1" ]]; then kdefs+=" -DENABLE_IPV6_DEBUG_RX"; fi; \
+	$(MAKE) -C "$(AARCH64_DIR)" CROSS="$(AARCH64_CROSS)" USERPROG=tcp6test KERNEL_DEFS="$$kdefs" all
+	@DTB="$(DTB)" MEM="$(MEM)" KERNEL_IMG="$(AARCH64_IMG)" TAP_IF="$(TAP_IF)" TEST_TIMEOUT_S="$${TEST_TIMEOUT_S:-25}" MONA_ENABLE_NAT66=1 tools/test-tcp6-wikipedia.sh "$(TAP_IF)"
 
 test-aarch64: userland
 	@echo "Starting QEMU (raspi3b) selftests"
