@@ -15,6 +15,13 @@ if [[ $EUID -ne 0 ]]; then
   exit 2
 fi
 
+# Check for macOS
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  echo "Error: This script relies on Linux-specific tools (ip, modprobe) and kernel modules." >&2
+  echo "On macOS, consider using 'make run USB_NET_BACKEND=user' (slirp) or install TunTap." >&2
+  exit 1
+fi
+
 if [[ ! -e /dev/net/tun ]]; then
   echo "/dev/net/tun missing; trying to load tun module" >&2
   modprobe tun || true

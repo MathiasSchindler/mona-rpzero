@@ -207,9 +207,15 @@ if [[ "$USB_NET" -eq 1 ]]; then
       fi
 
       if [[ ! -e /dev/net/tun ]]; then
-        echo "ERROR: /dev/net/tun not found (TAP backend requires the tun module)." >&2
-        echo "Try: sudo modprobe tun" >&2
-        exit 2
+        if [[ "$(uname -s)" == "Darwin" ]]; then
+           # On macOS with TunTap, we might not have /dev/net/tun, but QEMU might handle it if we pass the right device.
+           # However, standard QEMU tap networking on macOS is tricky.
+           echo "WARNING: /dev/net/tun not found. This is expected on macOS unless you have TunTap installed." >&2
+        else
+           echo "ERROR: /dev/net/tun not found (TAP backend requires the tun module)." >&2
+           echo "Try: sudo modprobe tun" >&2
+           exit 2
+        fi
       fi
 
       # If /dev/net/tun isn't accessible, QEMU will fail with EPERM when trying to configure the tap.

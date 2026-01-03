@@ -46,6 +46,13 @@ if [[ $EUID -ne 0 ]]; then
   exit 2
 fi
 
+# Check for macOS
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  echo "Error: This script relies on Linux-specific tools (ip, sysctl, nft) and kernel modules." >&2
+  echo "On macOS, consider using 'make run USB_NET_BACKEND=user' (slirp)." >&2
+  exit 1
+fi
+
 mkdir -p "$STATE_DIR"
 
 # Create the TAP device owned by the target user.

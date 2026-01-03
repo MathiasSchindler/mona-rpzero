@@ -59,8 +59,12 @@ FB_VIRT_MULT ?= 4
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
 QEMU_DISPLAY ?= cocoa
+# macOS doesn't have native TAP support (requires TunTap or vmnet).
+# Default to user-mode networking (slirp) which works out of the box.
+USB_NET_BACKEND ?= user
 else
 QEMU_DISPLAY ?= gtk
+USB_NET_BACKEND ?= tap
 endif
 
 # Optional: which userland tool to embed as the EL0 payload.
